@@ -1,0 +1,129 @@
+import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@/generated/prisma/client";
+import { prisma } from "@/lib/db";
+import { getSession } from "@/lib/auth";
+import { deployProject, isDeployConfigured } from "@/lib/deploy";
+import { decryptSecret } from "@/lib/crypto";
+import { fixFromError, type GeneratedFile, type GenerationPlan } from "@/lib/ai/generate";
+
+const MAX_AUTO_FIX_ATTEMPTS = 2;
+
+export async function GET(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await ctx.params;
+  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const config = await prisma.deploymentConfig.findUnique({ where: { projectId: id } });
+  return NextResponse.json({
+    available: isDeployConfigured(),
+    status: config?.deployStatus ?? "NONE",
+    url: config?.deployedUrl ?? null,
+    deployedAt: config?.deployedAt ?? null,
+    error: config?.deployError ?? null,
+  });
+}
+
+export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await ctx.params;
+  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (!isDeployConfigured()) {
+    return NextResponse.json({ error: "Deploy automation isn't configured on this server." }, { status: 501 });
+  }
+
+  const latestApp = await prisma.generatedApp.findFirst({
+    where: { projectId: id },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!latestApp) {
+    return NextResponse.json({ error: "Nothing has been generated yet." }, { status: 400 });
+  }
+
+  const existingConfig = await prisma.deploymentConfig.upsert({
+    where: { projectId: id },
+    create: { projectId: id, deployStatus: "DEPLOYING", deployError: null },
+    update: { deployStatus: "DEPLOYING", deployError: null },
+  });
+
+  const extraSecrets: Record<string, string> = {};
+  if (existingConfig.shopifyShopDomain && existingConfig.shopifyAdminAccessTokenCiphertext) {
+    extraSecrets.SHOPIFY_STORE_DOMAIN = existingConfig.shopifyShopDomain;
+    extraSecrets.SHOPIFY_ADMIN_ACCESS_TOKEN = decryptSecret(existingConfig.shopifyAdminAccessTokenCiphertext);
+  }
+
+  let plan = latestApp.plan as unknown as GenerationPlan;
+  let files = latestApp.files as unknown as GeneratedFile[];
+  const autoFixLog: { attempt: number; diagnosis: string }[] = [];
+
+  for (let attempt = 1; attempt <= MAX_AUTO_FIX_ATTEMPTS; attempt++) {
+    try {
+      const result = await deployProject({
+        projectId: id,
+        projectName: project.name,
+        files,
+        extraSecrets,
+      });
+
+      await prisma.deploymentConfig.update({
+        where: { projectId: id },
+        data: {
+          deployStatus: "DEPLOYED",
+          deployedUrl: result.url,
+          deployedAppName: result.appName,
+          deployedAt: new Date(),
+          deployError: null,
+        },
+      });
+
+      return NextResponse.json({ status: "DEPLOYED", url: result.url, autoFixed: autoFixLog.length > 0, autoFixLog });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Deploy failed";
+
+      if (attempt >= MAX_AUTO_FIX_ATTEMPTS) {
+        await prisma.deploymentConfig.update({
+          where: { projectId: id },
+          data: { deployStatus: "FAILED", deployError: message.slice(0, 2000) },
+        });
+        return NextResponse.json({ error: message, autoFixLog }, { status: 500 });
+      }
+
+      // Try to have the AI diagnose and patch the failure, then retry the deploy once more.
+      try {
+        const fix = await fixFromError(plan, files, message, project.name);
+        autoFixLog.push({ attempt, diagnosis: fix.diagnosis });
+        if (!fix.changed) {
+          // The AI couldn't attribute this to anything in the generated files — no point retrying.
+          await prisma.deploymentConfig.update({
+            where: { projectId: id },
+            data: { deployStatus: "FAILED", deployError: message.slice(0, 2000) },
+          });
+          return NextResponse.json({ error: message, autoFixLog }, { status: 500 });
+        }
+        files = fix.files;
+        await prisma.generatedApp.create({
+          data: {
+            projectId: id,
+            plan: plan as unknown as Prisma.InputJsonValue,
+            files: files as unknown as Prisma.InputJsonValue,
+          },
+        });
+      } catch {
+        // Auto-fix attempt itself failed (e.g. AI call errored) — report the original deploy error.
+        await prisma.deploymentConfig.update({
+          where: { projectId: id },
+          data: { deployStatus: "FAILED", deployError: message.slice(0, 2000) },
+        });
+        return NextResponse.json({ error: message, autoFixLog }, { status: 500 });
+      }
+    }
+  }
+
+  return NextResponse.json({ error: "Deploy failed after auto-fix attempts.", autoFixLog }, { status: 500 });
+}

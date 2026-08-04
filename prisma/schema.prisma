@@ -1,0 +1,130 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String?
+  passwordHash String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  projects Project[]
+}
+
+model Project {
+  id             String   @id @default(cuid())
+  name           String
+  nameConfirmed  Boolean  @default(false)
+  description String?
+  status      ProjectStatus @default(DRAFT)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  messages      ChatMessage[]
+  generatedApps GeneratedApp[]
+
+  githubTokenCiphertext String?
+  githubRepoFullName    String?
+  githubRepoUrl         String?
+  githubConnectedAt     DateTime?
+
+  deploymentConfig DeploymentConfig?
+}
+
+enum ProjectStatus {
+  DRAFT
+  PLANNING
+  GENERATING
+  READY
+  FAILED
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  role      MessageRole
+  content   String
+  createdAt DateTime    @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+model GeneratedApp {
+  id        String   @id @default(cuid())
+  plan      Json
+  files     Json
+  createdAt DateTime @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model DeploymentConfig {
+  id        String   @id @default(cuid())
+  updatedAt DateTime @updatedAt
+
+  appVersion String @default("0.1.0")
+
+  shopifyPartnerTokenCiphertext String?
+  shopifyOrgId                  String?
+
+  hostingProvider         HostingProvider?
+  hostingTokenCiphertext  String?
+  hostingConfig           Json?
+
+  deployStatus   DeployStatus @default(NONE)
+  deployedUrl    String?
+  deployedAppName String?
+  deployedAt     DateTime?
+  deployError    String?
+
+  shopifyShopDomain                  String?
+  shopifyAdminAccessTokenCiphertext  String?
+  shopifyGrantedScopes               String?
+  installStatus                      InstallStatus @default(NONE)
+  installedAt                        DateTime?
+  installError                       String?
+
+  projectId String  @unique
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+enum DeployStatus {
+  NONE
+  DEPLOYING
+  DEPLOYED
+  FAILED
+}
+
+enum HostingProvider {
+  FLY
+  RENDER
+  RAILWAY
+  HEROKU
+  VM
+}
+
+enum InstallStatus {
+  NONE
+  INSTALLED
+  FAILED
+}
