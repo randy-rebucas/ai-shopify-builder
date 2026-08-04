@@ -59,7 +59,7 @@ export function flyAppNameFor(projectId: string, projectName: string): string {
   return `${trimmed}-${suffix}`;
 }
 
-async function materialize(files: GeneratedFile[], dir: string): Promise<void> {
+export async function materialize(files: GeneratedFile[], dir: string): Promise<void> {
   for (const file of files) {
     const target = path.join(dir, file.path);
     await mkdir(path.dirname(target), { recursive: true });

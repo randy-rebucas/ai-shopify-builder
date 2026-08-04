@@ -56,3 +56,30 @@ export async function clearSession(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE);
 }
+
+export interface OAuthStatePayload {
+  purpose: string;
+  userId: string;
+  projectId: string;
+}
+
+export async function signOAuthState(payload: OAuthStatePayload): Promise<string> {
+  return new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("10m")
+    .sign(secret);
+}
+
+export async function verifyOAuthState(token: string): Promise<OAuthStatePayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, secret);
+    return {
+      purpose: payload.purpose as string,
+      userId: payload.userId as string,
+      projectId: payload.projectId as string,
+    };
+  } catch {
+    return null;
+  }
+}

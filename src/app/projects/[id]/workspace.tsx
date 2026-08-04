@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogoMark } from "@/components/logo";
@@ -157,8 +157,8 @@ function DeploymentPanel({
   }
 
   return (
-    <div className="border-t border-black/10 pt-6">
-      <label className="mb-1 block text-xs font-medium uppercase text-black/40">Deployment</label>
+    <div className="rounded-xl border border-black/10 p-4">
+      <label className="mb-1 block text-xs font-medium uppercase text-black/40">Deployment credentials</label>
       <p className="mb-3 text-xs text-black/40">
         Credentials used later to install this app on a store and deploy it to a host. Stored encrypted — tokens
         are never sent back to the browser once saved.
@@ -296,7 +296,7 @@ function InstallPanel({
   }
 
   return (
-    <div className="border-t border-black/10 pt-6">
+    <div className="rounded-xl border border-black/10 p-4">
       <label className="mb-1 block text-xs font-medium uppercase text-black/40">Install on your store</label>
       <p className="mb-3 text-xs text-black/40">
         This is a private app — create a custom app directly in your store admin (Settings &gt; Apps and sales
@@ -400,7 +400,7 @@ function DeployPanel({
 
   if (!status.available) {
     return (
-      <div className="border-t border-black/10 pt-6">
+      <div className="rounded-xl border border-black/10 p-4">
         <label className="mb-1 block text-xs font-medium uppercase text-black/40">Deploy</label>
         <p className="text-xs text-black/40">Deploy automation isn&apos;t configured on this server.</p>
       </div>
@@ -408,7 +408,7 @@ function DeployPanel({
   }
 
   return (
-    <div className="border-t border-black/10 pt-6">
+    <div className="rounded-xl border border-black/10 p-4">
       <label className="mb-1 block text-xs font-medium uppercase text-black/40">Deploy</label>
       <p className="mb-3 text-xs text-black/40">
         Builds and ships the generated app to hosting. If the build fails, we&apos;ll automatically diagnose the
@@ -464,35 +464,47 @@ function GithubPanel({
   onConnected: (result: { repoFullName: string | null; repoUrl: string | null }) => void;
   onDisconnected: () => void;
 }) {
-  const [token, setToken] = useState("");
-  const [repoName, setRepoName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pushResult, setPushResult] = useState<string | null>(null);
 
-  async function connect() {
-    if (!token.trim()) return;
-    setConnecting(true);
+  function connect() {
     setError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/github`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: token.trim(), repoName: repoName.trim() || undefined }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Failed to connect to GitHub");
+    setConnecting(true);
+    const popup = window.open(
+      `/api/github/oauth/start?projectId=${projectId}`,
+      "github-oauth",
+      "width=600,height=700",
+    );
+    if (!popup) {
+      setConnecting(false);
+      setError("Couldn't open the GitHub authorization popup — check your browser's popup blocker.");
+      return;
+    }
+
+    let settled = false;
+    function onMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || event.data.source !== "github-oauth") return;
+      settled = true;
+      window.removeEventListener("message", onMessage);
+      setConnecting(false);
+      if (!event.data.ok) {
+        setError(typeof event.data.error === "string" ? event.data.error : "Failed to connect to GitHub");
         return;
       }
-      setToken("");
-      onConnected({ repoFullName: data.repoFullName, repoUrl: data.repoUrl });
-    } catch {
-      setError("Failed to connect to GitHub");
-    } finally {
-      setConnecting(false);
+      onConnected({ repoFullName: event.data.repoFullName, repoUrl: event.data.repoUrl });
     }
+    window.addEventListener("message", onMessage);
+
+    const poll = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(poll);
+        window.removeEventListener("message", onMessage);
+        if (!settled) setConnecting(false);
+      }
+    }, 500);
   }
 
   async function disconnect() {
@@ -521,7 +533,7 @@ function GithubPanel({
   }
 
   return (
-    <div className="border-t border-black/10 pt-6">
+    <div className="rounded-xl border border-black/10 p-4">
       <label className="mb-1 block text-xs font-medium uppercase text-black/40">GitHub</label>
       {repoFullName ? (
         <div className="space-y-3">
@@ -549,28 +561,18 @@ function GithubPanel({
       ) : (
         <div className="space-y-2">
           <p className="text-xs text-black/40">
-            Paste a GitHub personal access token (repo scope) to create/connect a repository and push generated
-            files to it.
+            Connect your GitHub account to create a repository and push generated files to it. You&apos;ll be
+            asked on GitHub to grant permission before anything is created.
           </p>
-          <input
-            type="password"
-            className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-            placeholder="ghp_..."
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-          <input
-            className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-            placeholder="Repo name (optional, defaults to app name)"
-            value={repoName}
-            onChange={(e) => setRepoName(e.target.value)}
-          />
           <button
             onClick={connect}
-            disabled={connecting || !token.trim()}
-            className="rounded-full bg-black px-4 py-2 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={connecting}
+            className="flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {connecting ? "Connecting..." : "Connect GitHub"}
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0 fill-current" aria-hidden>
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+            </svg>
+            {connecting ? "Waiting for GitHub…" : "Connect GitHub"}
           </button>
         </div>
       )}
@@ -596,6 +598,7 @@ function ConfigurePanel({
   onDeploymentSaved,
   onInstallSaved,
   onDeploySaved,
+  onDeleted,
 }: {
   projectId: string;
   name: string;
@@ -613,6 +616,7 @@ function ConfigurePanel({
   onDeploymentSaved: (status: DeploymentStatus) => void;
   onInstallSaved: (status: InstallStatus) => void;
   onDeploySaved: (status: DeployStatus) => void;
+  onDeleted: () => void;
 }) {
   const [formName, setFormName] = useState(name);
   const [formDescription, setFormDescription] = useState(description ?? "");
@@ -621,12 +625,19 @@ function ConfigurePanel({
   const [dataModels, setDataModels] = useState<DataModel[]>(plan?.dataModels ?? []);
   const [logoUrl, setLogoUrl] = useState(plan?.logoUrl ?? "");
   const [logoError, setLogoError] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [generalSaving, setGeneralSaving] = useState(false);
+  const [generalSaveError, setGeneralSaveError] = useState<string | null>(null);
+  const [generalSaved, setGeneralSaved] = useState(false);
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planSaveError, setPlanSaveError] = useState<string | null>(null);
+  const [planSaved, setPlanSaved] = useState(false);
   const [syncedName, setSyncedName] = useState(name);
   const [syncedDescription, setSyncedDescription] = useState(description);
   const [syncedPlan, setSyncedPlan] = useState(plan);
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [settingsTab, setSettingsTab] = useState<"general" | "integrations" | "danger">("general");
 
   if (name !== syncedName || description !== syncedDescription || plan !== syncedPlan) {
     setSyncedName(name);
@@ -645,67 +656,161 @@ function ConfigurePanel({
     setList(list.map((item, i) => (i === index ? value : item)));
   }
 
-  async function save() {
-    setSaving(true);
-    setSaveError(null);
-    setSaved(false);
+  async function saveGeneral() {
+    setGeneralSaving(true);
+    setGeneralSaveError(null);
+    setGeneralSaved(false);
     try {
       const res = await fetch(`/api/projects/${projectId}/config`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: formName,
-          description: formDescription,
-          ...(plan ? { features, shopifyApis, dataModels, logoUrl } : {}),
-        }),
+        body: JSON.stringify({ name: formName, description: formDescription }),
       });
       if (!res.ok) {
         const data = await res.json();
-        setSaveError(typeof data.error === "string" ? data.error : "Failed to save configuration");
+        setGeneralSaveError(typeof data.error === "string" ? data.error : "Failed to save");
         return;
       }
       const data = await res.json();
-      setSaved(true);
-      onSaved({ name: data.project.name, description: data.project.description, plan: data.plan });
+      setGeneralSaved(true);
+      onSaved({ name: data.project.name, description: data.project.description, plan: data.plan ?? plan });
     } catch {
-      setSaveError("Failed to save configuration");
+      setGeneralSaveError("Failed to save");
     } finally {
-      setSaving(false);
+      setGeneralSaving(false);
     }
   }
 
+  async function saveAppPlan() {
+    if (!plan) return;
+    setPlanSaving(true);
+    setPlanSaveError(null);
+    setPlanSaved(false);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/config`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ features, shopifyApis, dataModels, logoUrl }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setPlanSaveError(typeof data.error === "string" ? data.error : "Failed to save");
+        return;
+      }
+      const data = await res.json();
+      setPlanSaved(true);
+      onSaved({ name: data.project.name, description: data.project.description, plan: data.plan });
+    } catch {
+      setPlanSaveError("Failed to save");
+    } finally {
+      setPlanSaving(false);
+    }
+  }
+
+  async function deleteProject() {
+    if (deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+      if (!res.ok) {
+        setDeleteError("Failed to delete project");
+        return;
+      }
+      onDeleted();
+    } catch {
+      setDeleteError("Failed to delete project");
+    } finally {
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  }
+
+  const SETTINGS_TABS = [
+    { key: "general" as const, label: "General & plan" },
+    { key: "integrations" as const, label: "Integrations & deploy" },
+    { key: "danger" as const, label: "Danger zone" },
+  ];
+
   return (
-    <div className="h-full overflow-y-auto px-6 py-5 text-sm">
-      <div className="mx-auto max-w-xl space-y-6">
-        <div>
-          <label className="mb-1 block text-xs font-medium uppercase text-black/40">App name</label>
-          <input
-            className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-            value={formName}
-            onChange={(e) => setFormName(e.target.value)}
-          />
-        </div>
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="flex gap-1 border-b border-black/10 px-6 pt-4">
+        {SETTINGS_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setSettingsTab(tab.key)}
+            className={`rounded-t-lg px-3 py-2 text-xs font-medium transition ${
+              settingsTab === tab.key
+                ? "border-b-2 border-black text-black"
+                : "border-b-2 border-transparent text-black/40 hover:text-black/70"
+            } ${tab.key === "danger" && settingsTab === tab.key ? "border-red-600 text-red-700" : ""}`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-medium uppercase text-black/40">Description</label>
-          <textarea
-            className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-            rows={2}
-            value={formDescription}
-            onChange={(e) => setFormDescription(e.target.value)}
-          />
-        </div>
-
-        {plan?.summary && (
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 text-sm">
+      <div className="mx-auto max-w-xl space-y-8">
+        <section className={`space-y-4 ${settingsTab === "general" ? "" : "hidden"}`}>
           <div>
-            <label className="mb-1 block text-xs font-medium uppercase text-black/40">Plan summary</label>
-            <p className="rounded-xl bg-black/5 px-3 py-2 text-black/70">{plan.summary}</p>
+            <h2 className="text-sm font-semibold text-black">General</h2>
+            <p className="mt-0.5 text-xs text-black/40">Basic identity for this app.</p>
           </div>
-        )}
 
-        {plan ? (
-          <>
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase text-black/40">App name</label>
+            <input
+              className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase text-black/40">Description</label>
+            <textarea
+              className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+              rows={2}
+              value={formDescription}
+              onChange={(e) => setFormDescription(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={saveGeneral}
+              disabled={generalSaving}
+              className="rounded-full bg-black px-5 py-2 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {generalSaving ? "Saving..." : "Save general"}
+            </button>
+            {generalSaved && <span className="text-xs font-medium text-emerald-600">✓ Saved</span>}
+            {generalSaveError && <span className="text-xs text-red-600">{generalSaveError}</span>}
+          </div>
+        </section>
+
+        <section className={`space-y-4 border-t border-black/10 pt-6 ${settingsTab === "general" ? "" : "hidden"}`}>
+          <div>
+            <h2 className="text-sm font-semibold text-black">App plan</h2>
+            <p className="mt-0.5 text-xs text-black/40">
+              {plan
+                ? "Generated from your conversation — edit anything before your next deploy."
+                : "Features, Shopify APIs, and data models become editable here after you generate the app."}
+            </p>
+          </div>
+
+          {plan?.summary && (
             <div>
+              <label className="mb-1 block text-xs font-medium uppercase text-black/40">Plan summary</label>
+              <p className="rounded-xl bg-black/5 px-3 py-2 text-black/70">{plan.summary}</p>
+            </div>
+          )}
+
+          {plan && (
+            <>
+            <div className="space-y-4">
+            <div className="rounded-xl border border-black/10 p-4">
               <label className="mb-1 block text-xs font-medium uppercase text-black/40">App icon</label>
               <div className="flex items-center gap-3">
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-black/10 bg-black/5">
@@ -740,7 +845,7 @@ function ConfigurePanel({
               </div>
             </div>
 
-            <div>
+            <div className="rounded-xl border border-black/10 p-4">
               <div className="mb-1 flex items-center justify-between">
                 <label className="text-xs font-medium uppercase text-black/40">Features</label>
                 <button
@@ -770,7 +875,7 @@ function ConfigurePanel({
               </div>
             </div>
 
-            <div>
+            <div className="rounded-xl border border-black/10 p-4">
               <div className="mb-1 flex items-center justify-between">
                 <label className="text-xs font-medium uppercase text-black/40">Shopify APIs</label>
                 <button
@@ -800,7 +905,7 @@ function ConfigurePanel({
               </div>
             </div>
 
-            <div>
+            <div className="rounded-xl border border-black/10 p-4">
               <div className="mb-1 flex items-center justify-between">
                 <label className="text-xs font-medium uppercase text-black/40">Data models</label>
                 <button
@@ -848,45 +953,113 @@ function ConfigurePanel({
                 {dataModels.length === 0 && <p className="text-xs text-black/40">No data models yet.</p>}
               </div>
             </div>
-          </>
-        ) : (
-          <p className="text-xs text-black/40">
-            Features, Shopify APIs, and data models become editable here after you generate the app.
-          </p>
-        )}
+            </div>
 
-        <div className="flex items-center gap-3 border-t border-black/10 pt-4">
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={saveAppPlan}
+                disabled={planSaving}
+                className="rounded-full bg-black px-5 py-2 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {planSaving ? "Saving..." : "Save app plan"}
+              </button>
+              {planSaved && <span className="text-xs font-medium text-emerald-600">✓ Saved</span>}
+              {planSaveError && <span className="text-xs text-red-600">{planSaveError}</span>}
+            </div>
+            </>
+          )}
+        </section>
+
+        <section className={`space-y-4 ${settingsTab === "integrations" ? "" : "hidden"}`}>
+          <div>
+            <h2 className="text-sm font-semibold text-black">Integrations & deploy</h2>
+            <p className="mt-0.5 text-xs text-black/40">
+              Source control, hosting credentials, storefront install, and deployment — each independent of the others.
+            </p>
+          </div>
+
+          <GithubPanel
+            projectId={projectId}
+            hasGeneratedApp={hasGeneratedApp}
+            repoFullName={githubRepoFullName}
+            repoUrl={githubRepoUrl}
+            onConnected={onGithubConnected}
+            onDisconnected={onGithubDisconnected}
+          />
+
+          <DeploymentPanel projectId={projectId} status={deploymentStatus} onSaved={onDeploymentSaved} />
+
+          <InstallPanel projectId={projectId} status={installStatus} onSaved={onInstallSaved} />
+
+          <DeployPanel
+            projectId={projectId}
+            status={deployStatus}
+            hasGeneratedApp={hasGeneratedApp}
+            onSaved={onDeploySaved}
+          />
+        </section>
+
+        <section className={`space-y-3 ${settingsTab === "danger" ? "" : "hidden"}`}>
+          <div>
+            <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
+            <p className="mt-0.5 text-xs text-red-700/70">
+              Permanently delete this project, its chat history, and any generated code.
+            </p>
+          </div>
+          {deleteError && <p className="text-xs text-red-600">{deleteError}</p>}
           <button
-            onClick={save}
-            disabled={saving}
-            className="rounded-full bg-black px-5 py-2 text-sm font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            onClick={() => setShowDeleteConfirm(true)}
+            disabled={deleting}
+            className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
-            {saving ? "Saving..." : "Save configuration"}
+            {deleting ? "Deleting…" : "Delete project"}
           </button>
-          {saved && <span className="text-xs font-medium text-emerald-600">✓ Saved</span>}
-          {saveError && <span className="text-xs text-red-600">{saveError}</span>}
-        </div>
-
-        <GithubPanel
-          projectId={projectId}
-          hasGeneratedApp={hasGeneratedApp}
-          repoFullName={githubRepoFullName}
-          repoUrl={githubRepoUrl}
-          onConnected={onGithubConnected}
-          onDisconnected={onGithubDisconnected}
-        />
-
-        <DeploymentPanel projectId={projectId} status={deploymentStatus} onSaved={onDeploymentSaved} />
-
-        <InstallPanel projectId={projectId} status={installStatus} onSaved={onInstallSaved} />
-
-        <DeployPanel
-          projectId={projectId}
-          status={deployStatus}
-          hasGeneratedApp={hasGeneratedApp}
-          onSaved={onDeploySaved}
-        />
+        </section>
       </div>
+      </div>
+
+      {showDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !deleting && setShowDeleteConfirm(false)}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-confirm-title"
+            className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="delete-confirm-title" className="font-semibold">
+              Delete &quot;{formName}&quot;?
+            </h2>
+            <p className="mt-1.5 text-sm text-black/60">
+              This permanently deletes the project, its chat history, and any generated code. This
+              can&apos;t be undone.
+            </p>
+            {deleteError && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{deleteError}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-black/70 hover:bg-black/5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={deleteProject}
+                disabled={deleting}
+                className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? "Deleting…" : "Delete project"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -957,6 +1130,169 @@ function FileTree({
   );
 }
 
+interface TerminalLine {
+  id: number;
+  kind: "command" | "stdout" | "stderr" | "system";
+  text: string;
+}
+
+function TerminalPanel({ projectId, hasGeneratedApp }: { projectId: string; hasGeneratedApp: boolean }) {
+  const [lines, setLines] = useState<TerminalLine[]>([]);
+  const [input, setInput] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const nextId = useRef(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  function pushLine(kind: TerminalLine["kind"], text: string) {
+    setLines((prev) => [...prev, { id: nextId.current++, kind, text }]);
+  }
+
+  useEffect(() => {
+    if (!hasGeneratedApp) return;
+    let cancelled = false;
+
+    async function start() {
+      setStarting(true);
+      setStartError(null);
+      try {
+        const res = await fetch(`/api/projects/${projectId}/terminal/start`, { method: "POST" });
+        if (cancelled) return;
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          setStartError(typeof data?.error === "string" ? data.error : "Failed to start terminal session");
+          return;
+        }
+        setStarted(true);
+        pushLine("system", "Session ready. Files from the latest generation are mounted at /workspace.");
+      } catch {
+        if (!cancelled) setStartError("Failed to start terminal session");
+      } finally {
+        if (!cancelled) setStarting(false);
+      }
+    }
+
+    start();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasGeneratedApp, projectId]);
+
+  useEffect(() => {
+    function stopBeacon() {
+      navigator.sendBeacon(`/api/projects/${projectId}/terminal/stop`, new Blob());
+    }
+    window.addEventListener("beforeunload", stopBeacon);
+    return () => {
+      window.removeEventListener("beforeunload", stopBeacon);
+      if (started) stopBeacon();
+    };
+  }, [projectId, started]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [lines]);
+
+  async function runCommand(e: React.FormEvent) {
+    e.preventDefault();
+    const command = input.trim();
+    if (!command || running || !started) return;
+    setInput("");
+    pushLine("command", command);
+    setRunning(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/terminal/exec`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command }),
+      });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => null);
+        pushLine("stderr", typeof data?.error === "string" ? data.error : "Command failed");
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex: number;
+        while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (!line) continue;
+          const event = JSON.parse(line);
+          if (event.type === "stdout" || event.type === "stderr") {
+            pushLine(event.type, event.data);
+          } else if (event.type === "error") {
+            pushLine("stderr", event.error);
+          } else if (event.type === "exit" && event.truncated) {
+            pushLine("system", "[output truncated]");
+          }
+        }
+      }
+    } catch {
+      pushLine("stderr", "Command failed — connection interrupted.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  if (!hasGeneratedApp) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+        <p className="text-sm font-medium text-black/50">Generate an app first</p>
+        <p className="text-xs text-black/35">The terminal runs against the latest generated files.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-[#0b0b0d]">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed">
+        {starting && <p className="text-white/40">Starting sandbox…</p>}
+        {startError && <p className="text-red-400">{startError}</p>}
+        {lines.map((line) => (
+          <div
+            key={line.id}
+            className={
+              line.kind === "command"
+                ? "text-emerald-400"
+                : line.kind === "stderr"
+                  ? "text-red-400"
+                  : line.kind === "system"
+                    ? "text-white/40"
+                    : "text-white/80"
+            }
+          >
+            {line.kind === "command" ? `$ ${line.text}` : <span className="whitespace-pre-wrap">{line.text}</span>}
+          </div>
+        ))}
+      </div>
+      <form onSubmit={runCommand} className="flex gap-2 border-t border-white/10 p-3">
+        <input
+          className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs text-white outline-none focus:border-white/25"
+          placeholder={started ? "Run a command…" : "Waiting for sandbox…"}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={!started || running}
+        />
+        <button
+          type="submit"
+          disabled={!started || running || !input.trim()}
+          className="shrink-0 rounded-lg bg-white/10 px-4 py-2 text-xs font-medium text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Run
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export function Workspace({
   project,
   initialMessages,
@@ -992,7 +1328,7 @@ export function Workspace({
   const [plannedFiles, setPlannedFiles] = useState<PlannedFile[] | null>(null);
   const [completedPaths, setCompletedPaths] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"code" | "configure">("code");
+  const [viewMode, setViewMode] = useState<"code" | "settings" | "terminal">("code");
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [appName, setAppName] = useState(project.name);
   const [appDescription, setAppDescription] = useState<string | null>(project.description ?? null);
@@ -1231,7 +1567,7 @@ export function Workspace({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-black/10 px-3 py-2">
           <div className="flex gap-1 rounded-full bg-black/5 p-1">
-            {(["code", "configure"] as const).map((mode) => (
+            {(["code", "settings", "terminal"] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
@@ -1248,7 +1584,7 @@ export function Workspace({
           )}
         </div>
 
-        {viewMode === "configure" ? (
+        {viewMode === "settings" ? (
           <ConfigurePanel
             projectId={project.id}
             name={appName}
@@ -1288,7 +1624,13 @@ export function Workspace({
               setDeployStatus(status);
               router.refresh();
             }}
+            onDeleted={() => {
+              router.push("/dashboard");
+              router.refresh();
+            }}
           />
+        ) : viewMode === "terminal" ? (
+          <TerminalPanel projectId={project.id} hasGeneratedApp={!!files && files.length > 0} />
         ) : files && files.length > 0 ? (
           <div className="flex min-h-0 flex-1">
             <div className="w-56 shrink-0 overflow-y-auto border-r border-black/10 bg-black/[0.015] p-2">

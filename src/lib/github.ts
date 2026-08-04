@@ -1,4 +1,40 @@
 const API_BASE = "https://api.github.com";
+const OAUTH_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
+const OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token";
+
+export function buildAuthorizeUrl(redirectUri: string, state: string): string {
+  if (!process.env.GITHUB_CLIENT_ID) {
+    throw new Error("GITHUB_CLIENT_ID environment variable must be set to connect GitHub accounts.");
+  }
+  const params = new URLSearchParams({
+    client_id: process.env.GITHUB_CLIENT_ID,
+    redirect_uri: redirectUri,
+    scope: "repo",
+    state,
+  });
+  return `${OAUTH_AUTHORIZE_URL}?${params.toString()}`;
+}
+
+export async function exchangeCodeForToken(code: string, redirectUri: string): Promise<string> {
+  if (!process.env.GITHUB_CLIENT_ID || !process.env.GITHUB_CLIENT_SECRET) {
+    throw new Error("GitHub OAuth isn't configured on this server.");
+  }
+  const res = await fetch(OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: process.env.GITHUB_CLIENT_ID,
+      client_secret: process.env.GITHUB_CLIENT_SECRET,
+      code,
+      redirect_uri: redirectUri,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.access_token) {
+    throw new Error(data.error_description || "Failed to exchange GitHub OAuth code for a token.");
+  }
+  return data.access_token as string;
+}
 
 function headers(token: string) {
   return {

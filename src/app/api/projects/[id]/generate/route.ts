@@ -11,8 +11,8 @@ import {
 } from "@/lib/ai/generate";
 import type { GenerationPlan, GeneratedFile } from "@/lib/ai/generate";
 import type { ChatMessageInput } from "@/lib/ai/types";
+import { generateRandomAppName } from "@/lib/random-name";
 
-const NAME_QUESTION = "What would you like to name this app?";
 const MAX_CLARIFICATION_ROUNDS = 3;
 
 // Streamed as newline-delimited JSON so the client can show live progress instead of waiting
@@ -84,9 +84,7 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
           );
           log("file revision complete");
         } else {
-          const priorClarifications = history.filter(
-            (m) => m.role === "ASSISTANT" && m.content !== NAME_QUESTION,
-          ).length;
+          const priorClarifications = history.filter((m) => m.role === "ASSISTANT").length;
           const triage =
             priorClarifications >= MAX_CLARIFICATION_ROUNDS
               ? { sufficient: true, question: null }
@@ -110,25 +108,10 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
           }
 
           if (!project.nameConfirmed) {
-            const lastMessage = history[history.length - 1];
-            const askedForName =
-              history[history.length - 2]?.role === "ASSISTANT" &&
-              history[history.length - 2]?.content === NAME_QUESTION;
-
-            if (askedForName && lastMessage) {
-              const proposedName = lastMessage.content.trim().slice(0, 80);
-              project = await prisma.project.update({
-                where: { id },
-                data: { name: proposedName || project.name, nameConfirmed: true },
-              });
-            } else {
-              await prisma.project.update({ where: { id }, data: { status: project.status } });
-              const question = await prisma.chatMessage.create({
-                data: { projectId: id, role: "ASSISTANT", content: NAME_QUESTION },
-              });
-              emit({ type: "clarification", message: question, projectName: project.name });
-              return;
-            }
+            project = await prisma.project.update({
+              where: { id },
+              data: { name: generateRandomAppName(), nameConfirmed: true },
+            });
           }
 
           log("planning — calling AI");
