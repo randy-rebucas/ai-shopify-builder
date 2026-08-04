@@ -8,6 +8,8 @@ const SUGGESTIONS = [
   "A referral program that rewards customers for inviting friends",
   "A product reviews widget with star ratings",
   "A back-in-stock notifier customers can subscribe to",
+  "A bundle builder for mix-and-match discounted product sets",
+  "A post-purchase upsell that offers a discounted add-on at checkout",
 ];
 
 export function NewProjectForm() {
@@ -66,14 +68,14 @@ export function NewProjectForm() {
           }}
           placeholder="Describe the Shopify app feature you want to build..."
           rows={3}
-          className="w-full resize-none bg-transparent px-2 py-1.5 text-base outline-none placeholder:text-black/35"
+          className="w-full resize-none bg-transparent px-2 py-1.5 text-base outline-none placeholder:text-black/60"
         />
         <div className="flex items-center justify-between px-1 pt-1">
-          <span className="text-xs text-black/35">Enter to build · Shift+Enter for a new line</span>
+          <span className="text-xs text-black/60">Enter to build · Shift+Enter for a new line</span>
           <button
             type="submit"
             disabled={loading || !prompt.trim()}
-            className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
           >
             {loading ? "Starting..." : "Build"}
             {!loading && (
@@ -93,7 +95,7 @@ export function NewProjectForm() {
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap justify-center gap-2">
         {SUGGESTIONS.map((suggestion) => (
           <button
             key={suggestion}
@@ -102,7 +104,7 @@ export function NewProjectForm() {
               setPrompt(suggestion);
               textareaRef.current?.focus();
             }}
-            className="rounded-full border border-black/10 px-3 py-1.5 text-xs text-black/60 hover:border-black/20 hover:bg-black/5"
+            className="rounded-full border border-black/10 px-3 py-1.5 text-xs text-black/60 transition hover:border-black/20 hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
           >
             {suggestion}
           </button>

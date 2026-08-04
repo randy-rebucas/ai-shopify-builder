@@ -17,6 +17,12 @@ const MAX_OUTPUT_BYTES = 1_000_000;
 // platform services, only out to the public internet (needed for npm install etc).
 const SANDBOX_NETWORK = "ai-shopify-terminal-sandbox";
 
+// Custom image (docker/terminal-sandbox.Dockerfile) built on top of node:20-alpine, adding openssl
+// (required by Prisma's query engine on musl), git, curl, and native-module build tools — a bare
+// node:20-alpine is missing all of these.
+const SANDBOX_IMAGE = "ai-shopify-terminal-sandbox:latest";
+const SANDBOX_DOCKERFILE = path.join(process.cwd(), "docker", "terminal-sandbox.Dockerfile");
+
 interface Session {
   projectId: string;
   containerId: string;
@@ -31,6 +37,18 @@ async function ensureNetwork(): Promise<void> {
     await execFileAsync("docker", ["network", "inspect", SANDBOX_NETWORK]);
   } catch {
     await execFileAsync("docker", ["network", "create", "--driver", "bridge", SANDBOX_NETWORK]);
+  }
+}
+
+async function ensureSandboxImage(): Promise<void> {
+  try {
+    await execFileAsync("docker", ["image", "inspect", SANDBOX_IMAGE]);
+  } catch {
+    await execFileAsync(
+      "docker",
+      ["build", "-f", SANDBOX_DOCKERFILE, "-t", SANDBOX_IMAGE, path.dirname(SANDBOX_DOCKERFILE)],
+      { timeout: 5 * 60_000 },
+    );
   }
 }
 
@@ -57,6 +75,7 @@ export async function startSession(projectId: string, files: GeneratedFile[]): P
   }
 
   await ensureNetwork();
+  await ensureSandboxImage();
 
   const dir = await mkdtemp(path.join(tmpdir(), "ai-shopify-terminal-"));
   await materialize(files, dir);
@@ -76,7 +95,7 @@ export async function startSession(projectId: string, files: GeneratedFile[]): P
     `${dir}:/workspace`,
     "-w",
     "/workspace",
-    "node:20-alpine",
+    SANDBOX_IMAGE,
     "sh",
     "-c",
     "sleep infinity",

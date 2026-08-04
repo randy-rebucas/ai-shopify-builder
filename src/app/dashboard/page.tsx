@@ -21,7 +21,10 @@ export default async function DashboardPage() {
       <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-6">
         <Logo />
         <form action="/api/auth/logout" method="post">
-          <button className="text-sm text-black/50 hover:text-black" type="submit">
+          <button
+            className="rounded-full text-sm text-black/65 transition hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
+            type="submit"
+          >
             Log out
           </button>
         </form>
@@ -40,7 +43,7 @@ export default async function DashboardPage() {
         </div>
 
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-black/40">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-black/60">
             Your projects{projects.length > 0 && ` (${projects.length})`}
           </h2>
         </div>
@@ -51,7 +54,7 @@ export default async function DashboardPage() {
               <li key={project.id}>
                 <Link
                   href={`/projects/${project.id}`}
-                  className="group flex h-full flex-col justify-between rounded-2xl border border-black/10 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-black/20 hover:shadow-md"
+                  className="group flex h-full flex-col justify-between rounded-2xl border border-black/10 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-black/20 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="line-clamp-2 font-medium leading-snug">{project.name}</span>
@@ -71,11 +74,11 @@ export default async function DashboardPage() {
                     </svg>
                   </div>
                   {project.description && (
-                    <p className="mt-1 line-clamp-2 text-sm text-black/45">{project.description}</p>
+                    <p className="mt-1 line-clamp-2 text-sm text-black/60">{project.description}</p>
                   )}
                   <div className="mt-4 flex items-center justify-between">
                     <StatusBadge status={project.status} />
-                    <span className="text-xs text-black/35">{relativeTime(project.updatedAt)}</span>
+                    <span className="text-xs text-black/60">{relativeTime(project.updatedAt)}</span>
                   </div>
                 </Link>
               </li>
@@ -84,7 +87,7 @@ export default async function DashboardPage() {
         ) : (
           <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-black/15 py-16 text-center">
             <p className="text-sm font-medium text-black/60">No projects yet</p>
-            <p className="text-sm text-black/40">Describe an idea above to build your first app.</p>
+            <p className="text-sm text-black/60">Describe an idea above to build your first app.</p>
           </div>
         )}
       </main>

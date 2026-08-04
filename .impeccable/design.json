@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-05T00:00:00.000Z",
+  "title": "Design System: AI Shopify Builder",
+  "extensions": {
+    "colorMeta": {
+      "spark-indigo": { "role": "primary", "displayName": "Spark Indigo", "canonical": "#6366f1", "tonalRamp": ["#1e1b4b", "#312e81", "#3730a3", "#4338ca", "#4f46e5", "#6366f1", "#a5b4fc", "#e0e7ff"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#171717", "tonalRamp": ["#000000", "#171717", "#262626", "#404040", "#737373", "#a3a3a3", "#d4d4d4", "#f5f5f5"] },
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#ffffff", "tonalRamp": ["#e5e5e5", "#efefef", "#f5f5f5", "#f9f9f9", "#fbfbfb", "#fdfdfd", "#ffffff", "#ffffff"] },
+      "amber-caution": { "role": "tertiary", "displayName": "Amber Caution", "canonical": "#b45309", "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fffbeb"] },
+      "emerald-ready": { "role": "tertiary", "displayName": "Emerald Ready", "canonical": "#047857", "tonalRamp": ["#022c22", "#064e3b", "#065f46", "#047857", "#059669", "#10b981", "#6ee7b7", "#ecfdf5"] },
+      "red-failed": { "role": "tertiary", "displayName": "Red Failed", "canonical": "#b91c1c", "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#fca5a5", "#fef2f2"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Hero headline on the marketing page only." },
+      "title": { "displayName": "Title", "purpose": "Section headings, card titles, dashboard prompt heading." },
+      "body": { "displayName": "Body", "purpose": "Paragraph copy and descriptions, ~60ch max width." },
+      "label": { "displayName": "Label", "purpose": "Badges, meta text, form labels, eyebrow chips." },
+      "mono": { "displayName": "Mono", "purpose": "Code and terminal output only." }
+    },
+    "shadows": [
+      { "name": "ambient-card", "value": "0 1px 2px rgba(0,0,0,0.04), 0 12px 32px -16px rgba(0,0,0,0.08)", "purpose": "Default resting elevation for feature and project cards." }
+    ],
+    "motion": [
+      { "name": "hover-lift", "value": "transform 0.2s ease, border-color 0.2s ease", "purpose": "Interactive card hover: -translate-y-0.5 plus border deepening to black/20." },
+      { "name": "button-fade", "value": "background-color 0.2s ease", "purpose": "Button hover background transitions." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main call-to-action, e.g. 'Get started free'.",
+      "html": "<button class=\"ds-btn-primary\">Get started free</button>",
+      "css": ".ds-btn-primary { background: #171717; color: #ffffff; border-radius: 9999px; padding: 0 24px; height: 44px; font-size: 0.875rem; font-weight: 500; border: none; cursor: pointer; transition: background-color 0.2s ease; } .ds-btn-primary:hover { background: rgba(23,23,23,0.85); } .ds-btn-primary:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary action, e.g. 'Log in'.",
+      "html": "<button class=\"ds-btn-secondary\">Log in</button>",
+      "css": ".ds-btn-secondary { background: transparent; color: #171717; border-radius: 9999px; padding: 0 24px; height: 44px; font-size: 0.875rem; font-weight: 500; border: 1px solid rgba(0,0,0,0.1); cursor: pointer; transition: background-color 0.2s ease; } .ds-btn-secondary:hover { background: rgba(0,0,0,0.03); }"
+    },
+    {
+      "name": "Project Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Dashboard project list item, links to the workspace.",
+      "html": "<a href=\"#\" class=\"ds-card\"><span class=\"ds-card-title\">My Storefront App</span><p class=\"ds-card-desc\">Custom checkout upsell flow</p></a>",
+      "css": ".ds-card { display: block; background: #ffffff; border-radius: 16px; border: 1px solid rgba(0,0,0,0.1); padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 12px 32px -16px rgba(0,0,0,0.08); text-decoration: none; transition: transform 0.2s ease, border-color 0.2s ease; } .ds-card:hover { transform: translateY(-2px); border-color: rgba(0,0,0,0.2); } .ds-card-title { font-weight: 500; color: #171717; line-height: 1.3; } .ds-card-desc { margin-top: 4px; font-size: 0.875rem; color: rgba(0,0,0,0.45); }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "description": "Project generation status indicator with optional pulsing dot.",
+      "html": "<span class=\"ds-badge ds-badge-generating\"><span class=\"ds-badge-dot\"></span>Generating</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 4px 10px; font-size: 0.75rem; font-weight: 500; } .ds-badge-generating { background: #fffbeb; color: #b45309; } .ds-badge-dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; animation: ds-ping 1.2s cubic-bezier(0,0,0.2,1) infinite; } @keyframes ds-ping { 75%, 100% { transform: scale(2); opacity: 0; } }"
+    },
+    {
+      "name": "Eyebrow Chip",
+      "kind": "chip",
+      "description": "Small pill label above hero headline, e.g. 'AI-powered app development'.",
+      "html": "<span class=\"ds-eyebrow\">AI-powered app development</span>",
+      "css": ".ds-eyebrow { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; border: 1px solid rgba(0,0,0,0.1); background: rgba(0,0,0,0.02); padding: 4px 12px; font-size: 0.75rem; font-weight: 500; color: rgba(0,0,0,0.6); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Workshop",
+    "overview": "The interface is a tool that gets out of the way. Black ink on white paper, one spark of indigo, and nothing else competing for attention — because the thing worth looking at is the app the AI is building, not the chrome around it. Density stays low: wide margins, generous line height, short bursts of copy. The workshop is quiet by design so that when the indigo accent appears — a badge, an icon glow, a focus ring — it reads unmistakably as 'the AI is working here'. This is a restrained system, not a decorative one. Surfaces are nearly flat; depth is suggested rather than staged. Ornament is limited to a single hand-drawn logomark and a sparse set of line icons at 1.75px stroke. Nothing about the visual language distracts from the plain-English prompt box, which stays the compositional center of gravity on both the marketing page and the dashboard.",
+    "keyCharacteristics": [
+      "Monochrome ink-on-paper base, one indigo accent used sparingly",
+      "Rounded-full (pill) buttons and badges throughout",
+      "Ambient, barely-there elevation — cards float, they don't announce",
+      "Geist Sans for everything; Geist Mono reserved for code/terminal surfaces",
+      "Generous whitespace and low visual density at every breakpoint"
+    ],
+    "rules": [
+      { "name": "The One Spark Rule", "body": "Spark Indigo appears at most once or twice per screen — an icon fill, a badge dot, a focus ring. It never becomes a background or a large surface color.", "section": "colors" },
+      { "name": "The Weight-Not-Family Rule", "body": "Hierarchy is built by moving between 400/500/600 weight and size, never by introducing a second typeface. Geist Mono is the one sanctioned exception, reserved strictly for code and terminal contexts.", "section": "typography" },
+      { "name": "The Ambient-Not-Staged Rule", "body": "Shadow exists to soften the edge between surfaces, not to announce importance. If a shadow is doing the job a border and 2px of hover-lift could do instead, prefer the border.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep Spark Indigo to a single accent role per screen — icon, dot, or focus ring, never a fill.",
+      "Do use pill shapes for anything clickable and 16px soft corners for containers — no other radius values.",
+      "Do lean on opacity steps of Ink (black/5 through black/70) for secondary text and borders instead of introducing new grays.",
+      "Do keep shadows ambient; let hairline borders carry most surface separation."
+    ],
+    "donts": [
+      "Don't introduce a second typeface; Geist Mono is reserved strictly for code/terminal, never for UI chrome.",
+      "Don't use heavy or high-contrast drop shadows — nothing in this system announces itself that loudly.",
+      "Don't use sharp (0px) or small (4px) corner radii; they read as foreign to the pill/16px vocabulary.",
+      "Don't let status colors (amber/emerald/red) leak into branding contexts — they're reserved for project/generation state only."
+    ]
+  }
+}

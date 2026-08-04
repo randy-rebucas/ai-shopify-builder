@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogoMark } from "@/components/logo";
@@ -1253,29 +1254,35 @@ function TerminalPanel({ projectId, hasGeneratedApp }: { projectId: string; hasG
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#0b0b0d]">
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4 font-mono text-xs leading-relaxed">
-        {starting && <p className="text-white/40">Starting sandbox…</p>}
-        {startError && <p className="text-red-400">{startError}</p>}
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 font-mono text-[13px] leading-relaxed"
+      >
+        {starting && <p className="text-white/60">Starting sandbox…</p>}
+        {startError && <p className="break-words text-red-400">{startError}</p>}
         {lines.map((line) => (
           <div
             key={line.id}
-            className={
+            className={`break-words whitespace-pre-wrap ${
               line.kind === "command"
                 ? "text-emerald-400"
                 : line.kind === "stderr"
                   ? "text-red-400"
                   : line.kind === "system"
-                    ? "text-white/40"
-                    : "text-white/80"
-            }
+                    ? "text-white/60"
+                    : "text-white/90"
+            }`}
           >
-            {line.kind === "command" ? `$ ${line.text}` : <span className="whitespace-pre-wrap">{line.text}</span>}
+            {line.kind === "command" ? `$ ${line.text}` : line.text}
           </div>
         ))}
+        {started && lines.length === 0 && !starting && (
+          <p className="text-white/40">$ Ready — type a command below.</p>
+        )}
       </div>
       <form onSubmit={runCommand} className="flex gap-2 border-t border-white/10 p-3">
         <input
-          className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs text-white outline-none focus:border-white/25"
+          className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-[13px] text-white outline-none focus:border-white/25"
           placeholder={started ? "Run a command…" : "Waiting for sandbox…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -1289,6 +1296,143 @@ function TerminalPanel({ projectId, hasGeneratedApp }: { projectId: string; hasG
           Run
         </button>
       </form>
+    </div>
+  );
+}
+
+// --- Preview: renders a generated admin route so it can be looked at visually without deploying
+// or running it in the terminal. The actual compile-and-run step (src/lib/preview-runtime.tsx)
+// only ever executes inside the sandboxed `/preview-frame` iframe below — never in this document —
+// because generated code is untrusted LLM output and must not run anywhere with access to this
+// app's session cookies, localStorage, or DOM. See PreviewFrame for the sandboxing details.
+
+function AdminChrome({ appName, children }: { appName: string; children: ReactNode }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#f1f1f1]">
+      <div className="flex shrink-0 items-center gap-3 bg-[#1a1a1a] px-4 py-2 text-white">
+        <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 fill-current" aria-hidden>
+          <path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z" />
+        </svg>
+        <span className="text-sm font-medium">your-store.myshopify.com</span>
+        <div className="ml-auto flex items-center gap-3 text-white/60">
+          <span className="h-6 w-40 rounded-md bg-white/10" />
+          <span className="h-6 w-6 shrink-0 rounded-full bg-white/15" />
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-black/10 bg-white px-4 py-2 text-xs text-black/50">
+        <span>Apps</span>
+        <span aria-hidden>/</span>
+        <span className="font-medium text-black/80">{appName}</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
+  );
+}
+
+// Label shown on a screen/block's selector pill: the route name (sans app/routes/ prefix and
+// extension) for an admin JSX route, or the bare filename for a Liquid theme-extension block.
+function previewBlockLabel(path: string): string {
+  if (path.endsWith(".liquid")) return path.split("/").pop() ?? path;
+  return path.replace(/^app\/routes\//, "").replace(/\.jsx$/, "");
+}
+
+function PreviewPanel({ files, appName }: { files: GeneratedFile[]; appName: string }) {
+  const previewFiles = useMemo(
+    () => files.filter((f) => /^app\/routes\/app\..*\.jsx$/.test(f.path) || f.path.endsWith(".liquid")),
+    [files],
+  );
+  const [selectedPath, setSelectedPath] = useState<string | null>(previewFiles[0]?.path ?? null);
+  const selected = previewFiles.find((f) => f.path === selectedPath) ?? previewFiles[0] ?? null;
+
+  if (previewFiles.length === 0) {
+    return (
+      <AdminChrome appName={appName}>
+        <div className="flex h-full flex-col items-center justify-center gap-1 p-10 text-center">
+          <p className="text-sm font-medium text-black/50">No admin screen to preview yet</p>
+          <p className="text-xs text-black/35">
+            Generated files don&apos;t include an app/routes/app.* screen or a .liquid block.
+          </p>
+        </div>
+      </AdminChrome>
+    );
+  }
+
+  return (
+    <AdminChrome appName={appName}>
+      <div className="flex flex-wrap gap-1.5 border-b border-black/5 bg-white px-4 py-2">
+        {previewFiles.map((f) => (
+          <button
+            key={f.path}
+            onClick={() => setSelectedPath(f.path)}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+              selected?.path === f.path ? "bg-black text-white" : "bg-black/5 text-black/60 hover:bg-black/10"
+            }`}
+          >
+            {previewBlockLabel(f.path)}
+          </button>
+        ))}
+      </div>
+      <PreviewFrame files={files} entry={selected!} />
+    </AdminChrome>
+  );
+}
+
+// Renders the selected generated route inside a sandboxed iframe with no `allow-same-origin`, so
+// the untrusted generated code that runs there gets an opaque browser origin: no access to this
+// app's cookies/localStorage, no reach into the parent window, and no credentials attached to any
+// fetch it issues. Communication is one-way file/entry data out, ready/error status back, over
+// postMessage — never widen this to allow-same-origin or a direct (non-iframe) render.
+function PreviewFrame({ files, entry }: { files: GeneratedFile[]; entry: GeneratedFile }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const readyRef = useRef(false);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    function sendRender() {
+      setError(null);
+      iframe!.contentWindow?.postMessage(
+        { source: "preview-frame-host", type: "render", files, entryPath: entry.path },
+        "*",
+      );
+    }
+
+    function onMessage(event: MessageEvent) {
+      if (event.source !== iframe!.contentWindow) return;
+      const data = event.data;
+      if (!data || data.source !== "preview-frame") return;
+      if (data.type === "ready") {
+        readyRef.current = true;
+        sendRender();
+      } else if (data.type === "error") {
+        setError(typeof data.error === "string" ? data.error : "Couldn't render this screen.");
+      }
+    }
+
+    window.addEventListener("message", onMessage);
+    if (readyRef.current) sendRender();
+    return () => window.removeEventListener("message", onMessage);
+  }, [files, entry]);
+
+  return (
+    <div className="relative h-full min-h-[200px] w-full">
+      <iframe
+        ref={iframeRef}
+        src="/preview-frame.html"
+        sandbox="allow-scripts"
+        title="App screen preview"
+        className="h-full w-full border-0 bg-white"
+        onLoad={() => {
+          readyRef.current = false;
+        }}
+      />
+      {error && (
+        <div className="absolute inset-3 overflow-auto rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          Couldn&apos;t render this screen: {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -1328,7 +1472,7 @@ export function Workspace({
   const [plannedFiles, setPlannedFiles] = useState<PlannedFile[] | null>(null);
   const [completedPaths, setCompletedPaths] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"code" | "settings" | "terminal">("code");
+  const [viewMode, setViewMode] = useState<"code" | "preview" | "settings" | "terminal">("code");
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [appName, setAppName] = useState(project.name);
   const [appDescription, setAppDescription] = useState<string | null>(project.description ?? null);
@@ -1567,7 +1711,7 @@ export function Workspace({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-black/10 px-3 py-2">
           <div className="flex gap-1 rounded-full bg-black/5 p-1">
-            {(["code", "settings", "terminal"] as const).map((mode) => (
+            {(["code", "preview", "settings", "terminal"] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
@@ -1579,12 +1723,34 @@ export function Workspace({
               </button>
             ))}
           </div>
-          {viewMode === "code" && activeFile && (
-            <span className="truncate pr-2 font-mono text-xs text-black/40">{activeFile}</span>
-          )}
+          <div className="flex min-w-0 items-center gap-3">
+            {viewMode === "code" && activeFile && (
+              <span className="truncate font-mono text-xs text-black/40">{activeFile}</span>
+            )}
+            {files && files.length > 0 && (
+              <a
+                href={`/api/projects/${project.id}/download`}
+                download
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-black/10 px-3 py-1 text-xs font-medium text-black/60 transition hover:border-black/20 hover:text-black"
+              >
+                <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0" fill="none" aria-hidden>
+                  <path
+                    d="M8 1.5v8m0 0L5 6.5M8 9.5l3-3M2.5 11v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Download
+              </a>
+            )}
+          </div>
         </div>
 
-        {viewMode === "settings" ? (
+        {viewMode === "preview" ? (
+          <PreviewPanel files={files ?? []} appName={appName} />
+        ) : viewMode === "settings" ? (
           <ConfigurePanel
             projectId={project.id}
             name={appName}

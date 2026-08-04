@@ -432,7 +432,7 @@ function buildReadme(plan: GenerationPlan, files: GeneratedFile[], appName: stri
     "",
     "```bash",
     "npm install",
-    "npm run dev   # requires the Shopify CLI to be authenticated with a partner/dev store",
+    "npm run dev   # starts the Remix dev server directly — no Shopify CLI or Partner account needed",
     "```",
     "",
     "This includes a runnable Shopify app scaffold (`shopify.app.toml`, `app/shopify.server.js`) that talks",
