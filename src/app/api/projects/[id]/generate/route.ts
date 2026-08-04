@@ -2,11 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { planFromConversation, generateFromPlan, reviseFromChange, assessSpecificity } from "@/lib/ai/generate";
+import {
+  planFromConversation,
+  generateFromPlan,
+  revisePlanFromChange,
+  reviseFilesFromChange,
+  assessSpecificity,
+} from "@/lib/ai/generate";
 import type { GenerationPlan, GeneratedFile } from "@/lib/ai/generate";
 import type { ChatMessageInput } from "@/lib/ai/types";
 
 const NAME_QUESTION = "What would you like to name this app?";
+const MAX_CLARIFICATION_ROUNDS = 3;
+
+// Streamed as newline-delimited JSON so the client can show live progress instead of waiting
+// for the whole (multi-AI-call, tens-of-seconds) generation to finish before rendering anything.
+type ProgressEvent =
+  | { type: "planning" }
+  | { type: "plan"; files: { path: string; purpose: string }[]; projectName: string }
+  | { type: "clarification"; message: unknown; projectName: string }
+  | { type: "result"; app: unknown; projectName: string }
+  | { type: "error"; error: string };
 
 export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -42,99 +58,124 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
     orderBy: { createdAt: "desc" },
   });
 
-  try {
-    let plan: GenerationPlan;
-    let files: GeneratedFile[];
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (event: ProgressEvent) => controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+      if (!project) return;
 
-    if (previousApp) {
-      const changeRequest = conversation[conversation.length - 1]?.content ?? "";
-      await prisma.project.update({ where: { id }, data: { status: "GENERATING" } });
-      log("revising existing app — calling AI");
-      const revised = await reviseFromChange(
-        previousApp.plan as unknown as GenerationPlan,
-        previousApp.files as unknown as GeneratedFile[],
-        changeRequest,
-        project.name,
-      );
-      log("revision complete");
-      plan = revised.plan;
-      files = revised.files;
-    } else {
-      log("triaging specificity — calling AI");
-      const triage = await assessSpecificity(conversation);
-      log(`triage complete — sufficient=${triage.sufficient}`);
-      if (!triage.sufficient) {
-        await prisma.project.update({ where: { id }, data: { status: project.status } });
-        const question = await prisma.chatMessage.create({
+      try {
+        let plan: GenerationPlan;
+        let files: GeneratedFile[];
+
+        if (previousApp) {
+          const changeRequest = conversation[conversation.length - 1]?.content ?? "";
+          await prisma.project.update({ where: { id }, data: { status: "GENERATING" } });
+          log("revising plan — calling AI");
+          emit({ type: "planning" });
+          plan = await revisePlanFromChange(previousApp.plan as unknown as GenerationPlan, changeRequest);
+          log("plan revision complete — calling AI for codegen");
+          emit({ type: "plan", files: plan.files, projectName: project.name });
+          files = await reviseFilesFromChange(
+            plan,
+            previousApp.files as unknown as GeneratedFile[],
+            changeRequest,
+            project.name,
+          );
+          log("file revision complete");
+        } else {
+          const priorClarifications = history.filter(
+            (m) => m.role === "ASSISTANT" && m.content !== NAME_QUESTION,
+          ).length;
+          const triage =
+            priorClarifications >= MAX_CLARIFICATION_ROUNDS
+              ? { sufficient: true, question: null }
+              : await (async () => {
+                  log("triaging specificity — calling AI");
+                  const result = await assessSpecificity(conversation);
+                  log(`triage complete — sufficient=${result.sufficient}`);
+                  return result;
+                })();
+          if (!triage.sufficient) {
+            await prisma.project.update({ where: { id }, data: { status: project.status } });
+            const question = await prisma.chatMessage.create({
+              data: {
+                projectId: id,
+                role: "ASSISTANT",
+                content: triage.question ?? "What kind of app or feature would you like to build?",
+              },
+            });
+            emit({ type: "clarification", message: question, projectName: project.name });
+            return;
+          }
+
+          if (!project.nameConfirmed) {
+            const lastMessage = history[history.length - 1];
+            const askedForName =
+              history[history.length - 2]?.role === "ASSISTANT" &&
+              history[history.length - 2]?.content === NAME_QUESTION;
+
+            if (askedForName && lastMessage) {
+              const proposedName = lastMessage.content.trim().slice(0, 80);
+              project = await prisma.project.update({
+                where: { id },
+                data: { name: proposedName || project.name, nameConfirmed: true },
+              });
+            } else {
+              await prisma.project.update({ where: { id }, data: { status: project.status } });
+              const question = await prisma.chatMessage.create({
+                data: { projectId: id, role: "ASSISTANT", content: NAME_QUESTION },
+              });
+              emit({ type: "clarification", message: question, projectName: project.name });
+              return;
+            }
+          }
+
+          log("planning — calling AI");
+          emit({ type: "planning" });
+          plan = await planFromConversation(conversation);
+          log("planning complete — calling AI for codegen");
+          emit({ type: "plan", files: plan.files, projectName: project.name });
+          await prisma.project.update({ where: { id }, data: { status: "GENERATING" } });
+          files = await generateFromPlan(plan, project.name);
+          log(`codegen complete — ${files.length} file(s)`);
+        }
+
+        const generatedApp = await prisma.generatedApp.create({
+          data: {
+            projectId: id,
+            plan: plan as unknown as Prisma.InputJsonValue,
+            files: files as unknown as Prisma.InputJsonValue,
+          },
+        });
+
+        await prisma.chatMessage.create({
           data: {
             projectId: id,
             role: "ASSISTANT",
-            content: triage.question ?? "What kind of app or feature would you like to build?",
+            content: previousApp
+              ? `Updated the app based on your request. ${files.length} file(s) in the project now.`
+              : `Generated ${files.length} file(s) for: ${plan.summary}`,
           },
         });
-        return NextResponse.json(
-          { needsClarification: true, message: question, projectName: project.name },
-          { status: 200 },
-        );
+
+        await prisma.project.update({ where: { id }, data: { status: "READY" } });
+        log("done — status READY");
+
+        emit({ type: "result", app: generatedApp, projectName: project.name });
+      } catch (error) {
+        log(`failed — ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`[generate:${id}] error`, error);
+        await prisma.project.update({ where: { id }, data: { status: "FAILED" } });
+        const message = error instanceof Error ? error.message : "Generation failed";
+        emit({ type: "error", error: message });
+      } finally {
+        controller.close();
       }
+    },
+  });
 
-      if (!project.nameConfirmed) {
-        const lastMessage = history[history.length - 1];
-        const askedForName = history[history.length - 2]?.role === "ASSISTANT" && history[history.length - 2]?.content === NAME_QUESTION;
-
-        if (askedForName && lastMessage) {
-          const proposedName = lastMessage.content.trim().slice(0, 80);
-          project = await prisma.project.update({
-            where: { id },
-            data: { name: proposedName || project.name, nameConfirmed: true },
-          });
-        } else {
-          await prisma.project.update({ where: { id }, data: { status: project.status } });
-          const question = await prisma.chatMessage.create({
-            data: { projectId: id, role: "ASSISTANT", content: NAME_QUESTION },
-          });
-          return NextResponse.json(
-            { needsClarification: true, message: question, projectName: project.name },
-            { status: 200 },
-          );
-        }
-      }
-
-      log("planning — calling AI");
-      plan = await planFromConversation(conversation);
-      log("planning complete — calling AI for codegen");
-      await prisma.project.update({ where: { id }, data: { status: "GENERATING" } });
-      files = await generateFromPlan(plan, project.name);
-      log(`codegen complete — ${files.length} file(s)`);
-    }
-
-    const generatedApp = await prisma.generatedApp.create({
-      data: {
-        projectId: id,
-        plan: plan as unknown as Prisma.InputJsonValue,
-        files: files as unknown as Prisma.InputJsonValue,
-      },
-    });
-
-    await prisma.chatMessage.create({
-      data: {
-        projectId: id,
-        role: "ASSISTANT",
-        content: previousApp
-          ? `Updated the app based on your request. ${files.length} file(s) in the project now.`
-          : `Generated ${files.length} file(s) for: ${plan.summary}`,
-      },
-    });
-
-    await prisma.project.update({ where: { id }, data: { status: "READY" } });
-    log("done — status READY");
-
-    return NextResponse.json({ ...generatedApp, projectName: project.name }, { status: 201 });
-  } catch (error) {
-    log(`failed — ${error instanceof Error ? error.message : String(error)}`);
-    console.error(`[generate:${id}] error`, error);
-    await prisma.project.update({ where: { id }, data: { status: "FAILED" } });
-    const message = error instanceof Error ? error.message : "Generation failed";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  return new Response(stream, {
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }

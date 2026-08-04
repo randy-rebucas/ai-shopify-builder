@@ -18,6 +18,15 @@ interface GeneratedFile {
   content: string;
 }
 
+interface PlannedFile {
+  path: string;
+  purpose: string;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 type TreeNode =
   | { type: "file"; name: string; path: string }
   | { type: "dir"; name: string; path: string; children: TreeNode[] };
@@ -979,6 +988,9 @@ export function Workspace({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [genPhase, setGenPhase] = useState<"idle" | "planning" | "generating">("idle");
+  const [plannedFiles, setPlannedFiles] = useState<PlannedFile[] | null>(null);
+  const [completedPaths, setCompletedPaths] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"code" | "configure">("code");
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
@@ -1046,26 +1058,67 @@ export function Workspace({
   async function generate() {
     if (generating) return;
     setGenerating(true);
+    setGenPhase("planning");
+    setPlannedFiles(null);
+    setCompletedPaths(new Set());
     setError(null);
+    let localPlannedFiles: PlannedFile[] = [];
     try {
       const res = await fetch(`/api/projects/${project.id}/generate`, { method: "POST" });
-      if (!res.ok) {
-        const data = await res.json();
-        setError(typeof data.error === "string" ? data.error : "Generation failed");
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => null);
+        setError(typeof data?.error === "string" ? data.error : "Generation failed");
         return;
       }
-      const app = await res.json();
-      if (typeof app.projectName === "string") setAppName(app.projectName);
-      if (app.needsClarification) {
-        setMessages((prev) => [...prev, app.message]);
-      } else {
-        setFiles(app.files);
-        setActiveFile(app.files?.[0]?.path ?? null);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let done = false;
+
+      while (!done) {
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex: number;
+        while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (!line) continue;
+          const event = JSON.parse(line);
+
+          if (event.type === "planning") {
+            setGenPhase("planning");
+          } else if (event.type === "plan") {
+            localPlannedFiles = event.files ?? [];
+            setPlannedFiles(localPlannedFiles);
+            setGenPhase("generating");
+            if (typeof event.projectName === "string") setAppName(event.projectName);
+          } else if (event.type === "clarification") {
+            setMessages((prev) => [...prev, event.message]);
+            if (typeof event.projectName === "string") setAppName(event.projectName);
+            done = true;
+          } else if (event.type === "error") {
+            setError(typeof event.error === "string" ? event.error : "Generation failed");
+            done = true;
+          } else if (event.type === "result") {
+            for (const f of localPlannedFiles) {
+              setCompletedPaths((prev) => new Set(prev).add(f.path));
+              await delay(120);
+            }
+            if (typeof event.projectName === "string") setAppName(event.projectName);
+            setFiles(event.app?.files ?? null);
+            setActiveFile(event.app?.files?.[0]?.path ?? null);
+            done = true;
+          }
+        }
       }
     } catch {
       setError("Generation failed — the request could not be completed. It may still be running in the background; refresh in a moment to check.");
     } finally {
       setGenerating(false);
+      setGenPhase("idle");
       router.refresh();
     }
   }
@@ -1103,6 +1156,36 @@ export function Workspace({
               {m.content}
             </div>
           ))}
+          {generating && genPhase !== "idle" && (
+            <div className="max-w-[85%] space-y-2 rounded-2xl rounded-bl-md bg-black/5 px-3.5 py-3 text-sm text-black/80">
+              <div className="flex items-center gap-2 font-medium">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
+                </span>
+                {genPhase === "planning" ? "Planning your app…" : "Writing code…"}
+              </div>
+              {plannedFiles && plannedFiles.length > 0 && (
+                <ul className="space-y-1">
+                  {plannedFiles.map((f) => {
+                    const isDone = completedPaths.has(f.path);
+                    return (
+                      <li key={f.path} className="flex items-center gap-2 text-xs text-black/60">
+                        <span
+                          className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-[9px] leading-none ${
+                            isDone ? "bg-emerald-500 text-white" : "border border-black/20"
+                          }`}
+                        >
+                          {isDone ? "✓" : ""}
+                        </span>
+                        <span className={`truncate font-mono ${isDone ? "text-black/70" : ""}`}>{f.path}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center">
               <p className="text-sm text-black/50">

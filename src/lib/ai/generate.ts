@@ -108,11 +108,21 @@ Respond with ONLY valid JSON:
 change. Generate real, runnable JavaScript/JSX/Liquid code — no placeholders, no TypeScript syntax.`;
 
 const TRIAGE_SYSTEM_PROMPT = `You are the Solution Architect for AI Shopify Builder, deciding whether a user's request has
-enough detail to build a v1 plan from, or whether you should ask a clarifying question first.
+enough detail and is buildable on this platform, or whether you should ask a clarifying question first.
 
-A request is SUFFICIENT if it names a concrete feature or workflow (e.g. "a loyalty program where customers earn
-points per purchase", "a product reviews widget with star ratings"). A request is NOT sufficient if it's generic
-with no specific feature named (e.g. "let's build a shopify app", "I want an app for my store", "build me something").
+This platform only builds ONE kind of app: a PRIVATE/custom Shopify Remix app, embedded in the store admin,
+authenticated with a static Admin API access token (no OAuth flow). Codegen is restricted to admin UI routes
+(app/routes/app.*.jsx using Polaris + the Admin GraphQL API) plus a Postgres-backed data model. It CANNOT build:
+OAuth/public app-store listings, storefront checkout UI or checkout extensions, theme app extensions or Liquid
+theme edits, POS extensions, Shopify Functions, multi-store distribution, or anything requiring a public webhook
+callback outside the admin app itself.
+
+A request is SUFFICIENT only if BOTH are true:
+1. It names a concrete feature or workflow (e.g. "a loyalty program where customers earn points per purchase",
+   "a product reviews widget with star ratings") — not generic with no specific feature named (e.g. "let's build
+   a shopify app", "I want an app for my store", "build me something").
+2. It's buildable as an admin-embedded feature on this platform — it doesn't require any of the unsupported
+   capabilities listed above.
 
 Respond with ONLY valid JSON:
 {
@@ -120,9 +130,15 @@ Respond with ONLY valid JSON:
   "question": string | null
 }
 
-If sufficient is false, "question" must be a single, short, friendly question asking what kind of app or feature
-they want to build — offer 2-3 concrete examples to make it easy to answer. If sufficient is true, "question" must
-be null.`;
+If NOT sufficient because the request is too vague, "question" must be a single, short, friendly question asking
+what kind of app or feature they want to build — offer 2-3 concrete examples to make it easy to answer.
+
+If NOT sufficient because the request asks for something this platform can't build, "question" must briefly
+explain the constraint in plain terms (no need to enumerate every unsupported capability) and suggest a buildable,
+admin-side alternative that captures the spirit of the request, then ask if that works or if they'd like something
+else admin-side.
+
+If sufficient is true, "question" must be null.`;
 
 export interface GenerationPlan {
   summary: string;
@@ -273,12 +289,10 @@ function assembleFiles(plan: GenerationPlan, codeFiles: GeneratedFile[], appName
   ];
 }
 
-export async function reviseFromChange(
+export async function revisePlanFromChange(
   previousPlan: GenerationPlan,
-  previousFiles: GeneratedFile[],
   changeRequest: string,
-  appName: string,
-): Promise<{ plan: GenerationPlan; files: GeneratedFile[] }> {
+): Promise<GenerationPlan> {
   const provider = getAIProvider("claude");
 
   const planRaw = await provider.complete({
@@ -292,8 +306,16 @@ export async function reviseFromChange(
     throw new Error("The AI response was cut off before it finished revising the plan. Try again.");
   }
   // Preserve fields not part of the AI-facing schema (e.g. logoUrl set in Configure).
-  const plan: GenerationPlan = { ...previousPlan, ...revisedPlanFields };
+  return { ...previousPlan, ...revisedPlanFields };
+}
 
+export async function reviseFilesFromChange(
+  plan: GenerationPlan,
+  previousFiles: GeneratedFile[],
+  changeRequest: string,
+  appName: string,
+): Promise<GeneratedFile[]> {
+  const provider = getAIProvider("claude");
   const previousCodeFiles = stripDocs(previousFiles);
 
   const filesRaw = await provider.complete({
@@ -321,7 +343,7 @@ export async function reviseFromChange(
     else merged.push(file);
   }
 
-  return { plan, files: assembleFiles(plan, merged, appName) };
+  return assembleFiles(plan, merged, appName);
 }
 
 export async function fixFromError(
