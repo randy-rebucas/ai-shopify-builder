@@ -182,6 +182,10 @@ export function renderPreviewComponent(files: GeneratedFile[], entry: GeneratedF
     }
     const code = transpilePreviewModule(file.content);
     const moduleObj: { exports: Record<string, unknown> } = { exports: {} };
+    // Seed the cache with the (still-empty) exports object before running the module body, CommonJS
+    // style — a circular import (A requires B, B requires A) then resolves to this in-progress
+    // object instead of re-entering executeModule and recursing until the call stack overflows.
+    cache.set(file.path, moduleObj.exports);
     const requireShim = (spec: string): unknown => {
       if (spec === "react") return React;
       if (spec === "@shopify/polaris") return polarisWithFallbacks;

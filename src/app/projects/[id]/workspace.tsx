@@ -1811,9 +1811,6 @@ function PreviewFrame({ files, entry }: { files: GeneratedFile[]; entry: Generat
         sandbox="allow-scripts"
         title="App screen preview"
         className="h-full w-full border-0 bg-white"
-        onLoad={() => {
-          readyRef.current = false;
-        }}
       />
       {error && (
         <div className="absolute inset-3 overflow-auto rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
