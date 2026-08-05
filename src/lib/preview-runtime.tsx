@@ -27,10 +27,22 @@ export interface GeneratedFile {
 // self-referential empty-array proxy: `.map`/`.length`/spreads work (it's really an empty array),
 // and any further property access (`.products.edges.node`) yields another one of these instead
 // of throwing, so arbitrarily deep loader-data shapes degrade to "renders nothing" rather than crash.
+//
+// The proxy target is a no-op FUNCTION (not the backing array directly) so the stub is itself
+// callable — generated code commonly calls a String/Number method on a loader-data field
+// (`review.createdAt.toLocaleDateString()`, `product.title.replace(...)`), and since that field
+// doesn't really exist, property access already fell through to another one of these stubs; if
+// that stub weren't callable, invoking it as a method would throw "X is not a function" instead of
+// degrading gracefully. `apply` returns yet another stub so chained calls keep degrading too.
 function createLoaderStub(): unknown {
-  return new Proxy([] as unknown[], {
-    get: (target, prop, receiver) =>
-      prop in target || typeof prop === "symbol" ? Reflect.get(target, prop, receiver) : createLoaderStub(),
+  const backingArray: unknown[] = [];
+  const target = function loaderStub() {};
+  return new Proxy(target, {
+    get: (_target, prop) =>
+      prop in backingArray || typeof prop === "symbol"
+        ? Reflect.get(backingArray, prop, backingArray)
+        : createLoaderStub(),
+    apply: () => createLoaderStub(),
   });
 }
 const loaderDataShim = createLoaderStub();
@@ -42,7 +54,11 @@ const remixReactShim = {
   useNavigate: () => () => {},
   useSubmit: () => () => {},
   useFetcher: () => ({ Form: "form", state: "idle", data: null, submit: () => {}, load: () => {} }),
-  useParams: () => ({}),
+  // Route params (e.g. the `$id` in app.reviews.$id.jsx) have no real value in the preview — return
+  // a proxy where any accessed key comes back "" (a real string) rather than undefined, since
+  // generated code routinely calls string methods on a param (`params.id.replace(...)`) and a real
+  // empty string supports the full String.prototype natively, no further stubbing needed.
+  useParams: () => new Proxy({}, { get: () => "" }),
   useSearchParams: () => [new URLSearchParams(), () => {}],
   useLocation: () => ({ pathname: "/", search: "", hash: "", state: null, key: "default" }),
   useRevalidator: () => ({ revalidate: () => {}, state: "idle" }),
