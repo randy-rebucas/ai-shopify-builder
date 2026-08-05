@@ -72,19 +72,27 @@ export default function SignupPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    const res = await fetch("/api/auth/signup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, name }),
-    });
-    setLoading(false);
-    if (!res.ok) {
-      const data = await res.json();
-      setError(typeof data.error === "string" ? data.error : "Signup failed");
-      return;
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, name }),
+      });
+      if (!res.ok) {
+        // A 500 from an unhandled server exception has no JSON body at all — res.json() would
+        // throw SyntaxError ("Unexpected end of JSON input") on that, so parse defensively instead
+        // of assuming every non-OK response is one of this route's own JSON error payloads.
+        const data = await res.json().catch(() => null);
+        setError(typeof data?.error === "string" ? data.error : "Signup failed. Try again.");
+        return;
+      }
+      router.push("/dashboard");
+      router.refresh();
+    } catch {
+      setError("Signup failed. Try again.");
+    } finally {
+      setLoading(false);
     }
-    router.push("/dashboard");
-    router.refresh();
   }
 
   return (
