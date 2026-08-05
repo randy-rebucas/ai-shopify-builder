@@ -4,6 +4,8 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { verifyToken, ensureRepo } from "@/lib/github";
+import { canUseGithubIntegration } from "@/lib/usage";
+import { findAccessibleProject } from "@/lib/project-access";
 
 const bodySchema = z.object({
   token: z.string().min(1),
@@ -15,8 +17,13 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const eligibility = await canUseGithubIntegration(project.userId);
+  if (!eligibility.allowed) {
+    return NextResponse.json({ error: eligibility.reason, code: "PLAN_LIMIT" }, { status: 403 });
+  }
 
   const json = await request.json();
   const parsed = bodySchema.safeParse(json);
@@ -60,7 +67,7 @@ export async function DELETE(_request: NextRequest, ctx: { params: Promise<{ id:
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await prisma.project.update({

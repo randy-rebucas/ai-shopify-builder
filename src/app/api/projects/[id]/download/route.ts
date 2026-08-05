@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { filterSafeGeneratedFiles } from "@/lib/generated-file-path";
+import { findAccessibleProject } from "@/lib/project-access";
 
 function slugify(name: string): string {
   return (
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const latestApp = await prisma.generatedApp.findFirst({

@@ -67,6 +67,31 @@ const steps = [
   { title: "Deploy to Shopify", description: "Push your app live to your store or Partner account in one click." },
 ];
 
+const pricingTeaser = [
+  {
+    name: "Free",
+    price: "$0",
+    period: "/month",
+    tagline: "Explore the platform and build your first prototype.",
+    features: ["1 Project", "1 Shopify Store", "50 AI Credits/month", "Community Support"],
+  },
+  {
+    name: "Starter",
+    price: "$29",
+    period: "/month",
+    tagline: "Everything to build your first production app.",
+    features: ["5 Projects", "2 Shopify Stores", "1,000 AI Credits/month", "One-Click Deployment"],
+  },
+  {
+    name: "Professional",
+    price: "$99",
+    period: "/month",
+    tagline: "For growing agencies and Shopify app partners.",
+    featured: true,
+    features: ["Unlimited Projects", "10 Shopify Stores", "5,000 AI Credits/month", "Up to 5 Team Members"],
+  },
+];
+
 export default async function Home() {
   const session = await getSession();
   if (session) redirect("/dashboard");
@@ -76,6 +101,12 @@ export default async function Home() {
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
         <Logo />
         <nav className="flex items-center gap-2">
+          <Link
+            href="/pricing"
+            className="rounded-full px-4 py-2 text-sm font-medium text-black/70 transition hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
+          >
+            Pricing
+          </Link>
           <Link
             href="/login"
             className="rounded-full px-4 py-2 text-sm font-medium text-black/70 transition hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
@@ -172,6 +203,63 @@ export default async function Home() {
               ))}
             </div>
           </div>
+        </section>
+
+        <section id="pricing" className="mx-auto max-w-5xl px-4 py-20 sm:px-6">
+          <div className="mb-12 text-center">
+            <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Simple, transparent pricing</h2>
+            <p className="mt-2 text-sm text-black/60 sm:text-base">
+              Start for free. Upgrade when you&rsquo;re ready to ship to production.
+            </p>
+          </div>
+          <div className="grid gap-5 sm:grid-cols-3">
+            {pricingTeaser.map((tier) => (
+              <div
+                key={tier.name}
+                className={`flex flex-col rounded-2xl border p-6 ${
+                  tier.featured ? "border-black/80 shadow-lg" : "border-black/10"
+                }`}
+              >
+                {tier.featured && (
+                  <span className="mb-3 inline-flex w-fit items-center gap-1 rounded-full bg-[#6366f1]/10 px-2.5 py-1 text-xs font-medium text-[#6366f1]">
+                    ⭐ Most Popular
+                  </span>
+                )}
+                <h3 className="text-lg font-semibold tracking-tight">{tier.name}</h3>
+                <p className="mt-1 text-sm text-black/50">{tier.tagline}</p>
+                <div className="mt-4 flex items-baseline gap-1">
+                  <span className="text-3xl font-semibold tracking-tight">{tier.price}</span>
+                  <span className="text-sm text-black/50">{tier.period}</span>
+                </div>
+                <ul className="mt-5 flex flex-col gap-2 text-sm">
+                  {tier.features.map((item) => (
+                    <li key={item} className="flex items-start gap-2 text-black/75">
+                      <span className="mt-0.5 text-[#6366f1]">
+                        <CheckIcon />
+                      </span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  href="/pricing"
+                  className={`mt-6 inline-flex h-10 items-center justify-center rounded-full px-4 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1] ${
+                    tier.featured
+                      ? "bg-black text-white hover:bg-black/85"
+                      : "border border-black/10 hover:bg-black/[0.03]"
+                  }`}
+                >
+                  {tier.name === "Free" ? "Get started free" : `Choose ${tier.name}`}
+                </Link>
+              </div>
+            ))}
+          </div>
+          <p className="mt-8 text-center text-sm text-black/50">
+            Need more? Agency and Enterprise plans are available too.{" "}
+            <Link href="/pricing" className="font-medium text-black underline hover:no-underline">
+              See full pricing
+            </Link>
+          </p>
         </section>
 
         <section className="mx-auto max-w-3xl px-4 py-20 text-center sm:px-6">

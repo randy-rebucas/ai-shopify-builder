@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { verifyOAuthState } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { exchangeCodeForToken, verifyToken, ensureRepo } from "@/lib/github";
+import { findAccessibleProject } from "@/lib/project-access";
 
 function popupResponse(message: Record<string, unknown>): NextResponse {
   const html = `<!doctype html><html><body><script>
@@ -24,9 +25,7 @@ export async function GET(request: NextRequest) {
     return popupResponse({ ok: false, error: "This authorization link is invalid or expired." });
   }
 
-  const project = await prisma.project.findFirst({
-    where: { id: statePayload.projectId, userId: statePayload.userId },
-  });
+  const project = await findAccessibleProject(statePayload.userId, statePayload.projectId);
   if (!project) {
     return popupResponse({ ok: false, error: "Project not found." });
   }

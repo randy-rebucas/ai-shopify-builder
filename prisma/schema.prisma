@@ -18,7 +18,61 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
+  plan             PlanTier @default(FREE)
+  aiCreditsUsed     Int      @default(0)
+  aiCreditsResetAt  DateTime @default(now())
+
+  paymongoCheckoutSessionId String?   @unique
+  planExpiresAt             DateTime?
+
   projects Project[]
+
+  // Teams this user OWNS (i.e. the paying workspace they've invited others into).
+  teamMembersOwned TeamMember[] @relation("TeamOwner")
+  // Teams this user has been invited to / is a member of, as a non-owner.
+  teamMemberships  TeamMember[] @relation("TeamMembership")
+
+  // Marketplace: earnings accrue here as purchases are paid, and are debited when a payout is
+  // requested. There's no automated creator payout rail wired up (PayMongo has no Connect-style
+  // split-payment product) — payouts are requested here, then settled manually by the platform
+  // operator (bank transfer/GCash) and marked PAID out of band.
+  creatorBalanceCents  Int                   @default(0)
+  marketplaceListings  MarketplaceListing[]
+  marketplacePurchases MarketplacePurchase[]
+  creatorPayouts       CreatorPayout[]
+}
+
+// A single invited/active seat in a workspace owner's team. Team members get shared access to
+// the owner's existing projects — they don't get their own separate billing plan or project quota.
+model TeamMember {
+  id     String @id @default(cuid())
+  ownerId String
+  owner   User   @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  email  String
+  userId String?
+  user   User?   @relation("TeamMembership", fields: [userId], references: [id], onDelete: SetNull)
+
+  status      TeamMemberStatus @default(PENDING)
+  inviteToken String           @unique
+  invitedAt   DateTime         @default(now())
+  acceptedAt  DateTime?
+
+  @@unique([ownerId, email])
+}
+
+enum TeamMemberStatus {
+  PENDING
+  ACTIVE
+  REMOVED
+}
+
+enum PlanTier {
+  FREE
+  STARTER
+  PROFESSIONAL
+  AGENCY
+  ENTERPRISE
 }
 
 model Project {
@@ -33,8 +87,9 @@ model Project {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  messages      ChatMessage[]
-  generatedApps GeneratedApp[]
+  messages       ChatMessage[]
+  generatedApps  GeneratedApp[]
+  deployAttempts DeployAttempt[]
 
   githubTokenCiphertext String?
   githubRepoFullName    String?
@@ -115,6 +170,21 @@ enum DeployStatus {
   FAILED
 }
 
+// One row per deploy attempt (Build History) — DeploymentConfig only tracks the latest status,
+// this is the durable log of every attempt made on a project.
+model DeployAttempt {
+  id          String       @id @default(cuid())
+  status      DeployStatus
+  url         String?
+  error       String?
+  autoFixLog  Json?
+  startedAt   DateTime     @default(now())
+  finishedAt  DateTime?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
 enum HostingProvider {
   FLY
   RENDER
@@ -127,4 +197,81 @@ enum InstallStatus {
   NONE
   INSTALLED
   FAILED
+}
+
+// A published, purchasable snapshot of a generated app — decoupled from the source Project (which
+// can keep changing) by copying its plan/files at publish time, same pattern as GeneratedApp.
+model MarketplaceListing {
+  id          String          @id @default(cuid())
+  title       String
+  description String
+  category    ListingCategory
+  priceCents  Int             @default(0)
+  status      ListingStatus   @default(PUBLISHED)
+  plan        Json
+  files       Json
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  creatorId String
+  creator   User   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  purchases MarketplacePurchase[]
+}
+
+enum ListingCategory {
+  TEMPLATE
+  COMPONENT
+  EXTENSION
+  COMPLETE_APP
+  PROMPT_PACK
+}
+
+enum ListingStatus {
+  PUBLISHED
+  UNLISTED
+}
+
+model MarketplacePurchase {
+  id     String @id @default(cuid())
+
+  listingId String
+  listing   MarketplaceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  buyerId String
+  buyer   User   @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+
+  amountCents          Int
+  platformFeeCents     Int
+  creatorEarningsCents Int
+
+  paymongoCheckoutSessionId String?         @unique
+  status                    PurchaseStatus  @default(PENDING)
+  installedProjectId        String?
+  createdAt                 DateTime        @default(now())
+}
+
+enum PurchaseStatus {
+  PENDING
+  PAID
+}
+
+// A creator-initiated request to cash out their accrued creatorBalanceCents. Settled manually by
+// the platform operator — see the note on User.creatorBalanceCents.
+model CreatorPayout {
+  id String @id @default(cuid())
+
+  creatorId String
+  creator   User   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  amountCents Int
+  status      PayoutStatus @default(REQUESTED)
+  note        String?
+  requestedAt DateTime     @default(now())
+  paidAt      DateTime?
+}
+
+enum PayoutStatus {
+  REQUESTED
+  PAID
 }

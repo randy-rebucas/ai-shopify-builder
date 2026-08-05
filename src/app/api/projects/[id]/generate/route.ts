@@ -13,6 +13,10 @@ import type { GenerationPlan, GeneratedFile } from "@/lib/ai/generate";
 import type { ChatMessageInput } from "@/lib/ai/types";
 import { generateRandomAppName } from "@/lib/random-name";
 import { isRateLimited } from "@/lib/rate-limit";
+import { consumeAiCredits } from "@/lib/usage";
+import { findAccessibleProject } from "@/lib/project-access";
+
+const CREDITS_PER_GENERATION = 1;
 
 const MAX_CLARIFICATION_ROUNDS = 3;
 
@@ -39,8 +43,13 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
   const requestStartedAt = Date.now();
   const log = (stage: string) => console.log(`[generate:${id}] ${stage} (+${Date.now() - requestStartedAt}ms)`);
 
-  let project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  let project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const credits = await consumeAiCredits(project.userId, CREDITS_PER_GENERATION);
+  if (!credits.allowed) {
+    return NextResponse.json({ error: credits.reason, code: "PLAN_LIMIT" }, { status: 402 });
+  }
 
   log("request received");
 

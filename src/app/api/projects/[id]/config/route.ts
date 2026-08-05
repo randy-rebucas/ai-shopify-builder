@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { findAccessibleProject } from "@/lib/project-access";
 
 const bodySchema = z.object({
   name: z.string().min(1).optional(),
@@ -32,7 +33,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const json = await request.json();

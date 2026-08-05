@@ -113,6 +113,7 @@ export function NewProjectForm() {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [planLimitHit, setPlanLimitHit] = useState(false);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState(false);
@@ -138,6 +139,7 @@ export function NewProjectForm() {
     if (!prompt.trim() || loading) return;
     setLoading(true);
     setError(null);
+    setPlanLimitHit(false);
     try {
       const projectRes = await fetch("/api/projects", {
         method: "POST",
@@ -145,7 +147,13 @@ export function NewProjectForm() {
         body: JSON.stringify({ name: "Untitled app" }),
       });
       if (!projectRes.ok) {
-        setError("Couldn't create the project. Try again.");
+        const data = await projectRes.json().catch(() => null);
+        if (data?.code === "PLAN_LIMIT" && typeof data?.error === "string") {
+          setError(data.error);
+          setPlanLimitHit(true);
+        } else {
+          setError("Couldn't create the project. Try again.");
+        }
         return;
       }
       const project = await projectRes.json();
@@ -358,7 +366,19 @@ export function NewProjectForm() {
         </div>
       </form>
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="mt-2 text-sm text-red-600">
+          {error}
+          {planLimitHit && (
+            <>
+              {" "}
+              <a href="/pricing" className="font-medium underline hover:no-underline">
+                View plans
+              </a>
+            </>
+          )}
+        </p>
+      )}
       {enhanceError && <p className="mt-2 text-sm text-red-600">{enhanceError}</p>}
 
       <div className="mt-10">

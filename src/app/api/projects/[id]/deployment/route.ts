@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
+import { findAccessibleProject } from "@/lib/project-access";
 
 const HOSTING_PROVIDERS = ["FLY", "RENDER", "RAILWAY", "HEROKU", "VM"] as const;
 
@@ -51,7 +52,7 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ id: st
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const config = await prisma.deploymentConfig.findUnique({ where: { projectId: id } });
@@ -63,7 +64,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const json = await request.json();

@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import { startSession } from "@/lib/terminal";
 import type { GeneratedFile } from "@/lib/ai/generate";
 import { isRateLimited } from "@/lib/rate-limit";
+import { findAccessibleProject } from "@/lib/project-access";
 
 export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -16,7 +17,7 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
   }
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const latestApp = await prisma.generatedApp.findFirst({

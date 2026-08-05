@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
 import { getSession, signOAuthState } from "@/lib/auth";
 import { buildAuthorizeUrl } from "@/lib/github";
+import { canUseGithubIntegration } from "@/lib/usage";
+import { findAccessibleProject } from "@/lib/project-access";
+
+function popupError(message: string, code?: string): NextResponse {
+  const html = `<!doctype html><html><body><script>
+    window.opener && window.opener.postMessage(${JSON.stringify({ source: "github-oauth", ok: false, error: message, code })}, window.location.origin);
+    window.close();
+  </script></body></html>`;
+  return new NextResponse(html, { headers: { "Content-Type": "text/html" } });
+}
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -10,8 +19,13 @@ export async function GET(request: NextRequest) {
   const projectId = request.nextUrl.searchParams.get("projectId");
   if (!projectId) return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
 
-  const project = await prisma.project.findFirst({ where: { id: projectId, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, projectId);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const eligibility = await canUseGithubIntegration(project.userId);
+  if (!eligibility.allowed) {
+    return popupError(eligibility.reason ?? "GitHub integration isn't included in your plan.", "PLAN_LIMIT");
+  }
 
   const state = await signOAuthState({ purpose: "github-connect", userId: session.userId, projectId });
   const redirectUri = new URL("/api/github/oauth/callback", request.nextUrl.origin).toString();

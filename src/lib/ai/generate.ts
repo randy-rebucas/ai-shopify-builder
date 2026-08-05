@@ -140,6 +140,23 @@ else admin-side.
 
 If sufficient is true, "question" must be null.`;
 
+const PERFORMANCE_SYSTEM_PROMPT = `You are a performance reviewer for AI Shopify Builder, looking at a generated Shopify
+admin app's source files (Remix + Polaris + Prisma). Identify concrete performance issues: N+1 Admin GraphQL/Prisma
+queries, missing pagination on lists, unnecessary re-fetching or re-rendering, large unindexed queries, blocking
+work in loaders/actions that could be parallelized, oversized payloads. Do not flag purely stylistic issues or
+anything unrelated to runtime performance.
+
+You will receive JSON: { "files": <files as {path, content}> }.
+
+Respond with ONLY valid JSON:
+{
+  "summary": string,
+  "issues": { "file": string, "issue": string, "suggestion": string }[]
+}
+
+"summary" is one or two sentences on overall performance health. "issues" should be empty if nothing meaningful was
+found — don't invent issues to fill the list. Keep each "issue"/"suggestion" to one concise sentence.`;
+
 const ENHANCE_SYSTEM_PROMPT = `You rewrite a rough, one-line Shopify app feature idea into a clearer, more specific
 build request for an AI app generator. Keep the user's original intent and scope exactly — do not invent unrelated
 features, do not expand into a bigger app than what was implied, do not add marketing language.
@@ -404,6 +421,31 @@ export async function fixFromError(
   }
 
   return { diagnosis: parsed.diagnosis, files: assembleFiles(plan, merged, appName), changed: true };
+}
+
+export interface PerformanceIssue {
+  file: string;
+  issue: string;
+  suggestion: string;
+}
+
+export async function analyzePerformance(
+  files: GeneratedFile[],
+): Promise<{ summary: string; issues: PerformanceIssue[] }> {
+  const provider = getAIProvider("claude");
+  const codeFiles = stripDocs(files);
+
+  const raw = await provider.complete({
+    system: PERFORMANCE_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: JSON.stringify({ files: codeFiles }) }],
+    maxTokens: 4096,
+  });
+
+  try {
+    return JSON.parse(extractJson(raw)) as { summary: string; issues: PerformanceIssue[] };
+  } catch {
+    throw new Error("The AI response was cut off before it finished the performance review. Try again.");
+  }
 }
 
 function buildReadme(plan: GenerationPlan, files: GeneratedFile[], appName: string): string {

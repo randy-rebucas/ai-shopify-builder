@@ -6,6 +6,8 @@ import { encryptSecret } from "@/lib/crypto";
 import { normalizeShopDomain, verifyAdminAccessToken } from "@/lib/shopify";
 import { setAppSecrets } from "@/lib/deploy";
 import { redactSecrets } from "@/lib/redact";
+import { canConnectStore } from "@/lib/usage";
+import { findAccessibleProject } from "@/lib/project-access";
 
 const bodySchema = z.object({
   shopDomain: z.string().min(1),
@@ -17,7 +19,7 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ id: st
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const config = await prisma.deploymentConfig.findUnique({ where: { projectId: id } });
@@ -35,13 +37,21 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const json = await request.json();
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const existingForProject = await prisma.deploymentConfig.findUnique({ where: { projectId: id } });
+  if (existingForProject?.installStatus !== "INSTALLED") {
+    const eligibility = await canConnectStore(project.userId);
+    if (!eligibility.allowed) {
+      return NextResponse.json({ error: eligibility.reason, code: "PLAN_LIMIT" }, { status: 403 });
+    }
   }
 
   const shopDomain = normalizeShopDomain(parsed.data.shopDomain);

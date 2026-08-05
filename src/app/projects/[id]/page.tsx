@@ -2,6 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { isDeployConfigured } from "@/lib/deploy";
+import { findAccessibleProject } from "@/lib/project-access";
 import { Workspace } from "./workspace";
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
@@ -10,7 +11,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
   const { id } = await params;
   const [project, user] = await Promise.all([
-    prisma.project.findFirst({ where: { id, userId: session.userId } }),
+    findAccessibleProject(session.userId, id),
     prisma.user.findUnique({ where: { id: session.userId }, select: { name: true, email: true } }),
   ]);
   if (!project) notFound();

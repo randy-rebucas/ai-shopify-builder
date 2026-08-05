@@ -7,6 +7,8 @@ import { decryptSecret } from "@/lib/crypto";
 import { fixFromError, type GeneratedFile, type GenerationPlan } from "@/lib/ai/generate";
 import { isRateLimited } from "@/lib/rate-limit";
 import { redactSecrets } from "@/lib/redact";
+import { canDeploy } from "@/lib/usage";
+import { findAccessibleProject } from "@/lib/project-access";
 
 const MAX_AUTO_FIX_ATTEMPTS = 2;
 
@@ -15,7 +17,7 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ id: st
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const config = await prisma.deploymentConfig.findUnique({ where: { projectId: id } });
@@ -39,8 +41,13 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
   }
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const eligibility = await canDeploy(project.userId);
+  if (!eligibility.allowed) {
+    return NextResponse.json({ error: eligibility.reason, code: "PLAN_LIMIT" }, { status: 403 });
+  }
 
   if (!isDeployConfigured()) {
     return NextResponse.json({ error: "Deploy automation isn't configured on this server." }, { status: 501 });
@@ -59,6 +66,14 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
     create: { projectId: id, deployStatus: "DEPLOYING", deployError: null },
     update: { deployStatus: "DEPLOYING", deployError: null },
   });
+
+  const deployAttemptRecord = await prisma.deployAttempt.create({ data: { projectId: id, status: "DEPLOYING" } });
+  async function finishAttempt(data: { status: "DEPLOYED" | "FAILED"; url?: string; error?: string; autoFixLog: unknown }) {
+    await prisma.deployAttempt.update({
+      where: { id: deployAttemptRecord.id },
+      data: { status: data.status, url: data.url, error: data.error, autoFixLog: data.autoFixLog as Prisma.InputJsonValue, finishedAt: new Date() },
+    });
+  }
 
   const extraSecrets: Record<string, string> = {};
   if (existingConfig.shopifyShopDomain && existingConfig.shopifyAdminAccessTokenCiphertext) {
@@ -90,6 +105,7 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
         },
       });
 
+      await finishAttempt({ status: "DEPLOYED", url: result.url, autoFixLog });
       return NextResponse.json({ status: "DEPLOYED", url: result.url, autoFixed: autoFixLog.length > 0, autoFixLog });
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : "Deploy failed";
@@ -106,6 +122,7 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
           where: { projectId: id },
           data: { deployStatus: "FAILED", deployError: message.slice(0, 2000) },
         });
+        await finishAttempt({ status: "FAILED", error: message.slice(0, 2000), autoFixLog });
         return NextResponse.json({ error: message, autoFixLog }, { status: 500 });
       }
 
@@ -119,6 +136,7 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
             where: { projectId: id },
             data: { deployStatus: "FAILED", deployError: message.slice(0, 2000) },
           });
+          await finishAttempt({ status: "FAILED", error: message.slice(0, 2000), autoFixLog });
           return NextResponse.json({ error: message, autoFixLog }, { status: 500 });
         }
         files = fix.files;
@@ -135,10 +153,12 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
           where: { projectId: id },
           data: { deployStatus: "FAILED", deployError: message.slice(0, 2000) },
         });
+        await finishAttempt({ status: "FAILED", error: message.slice(0, 2000), autoFixLog });
         return NextResponse.json({ error: message, autoFixLog }, { status: 500 });
       }
     }
   }
 
+  await finishAttempt({ status: "FAILED", error: "Deploy failed after auto-fix attempts.", autoFixLog });
   return NextResponse.json({ error: "Deploy failed after auto-fix attempts.", autoFixLog }, { status: 500 });
 }

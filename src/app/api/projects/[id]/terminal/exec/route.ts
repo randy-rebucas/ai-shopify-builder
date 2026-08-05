@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { execCommand, hasSession } from "@/lib/terminal";
 import { isRateLimited } from "@/lib/rate-limit";
+import { findAccessibleProject } from "@/lib/project-access";
 
 const bodySchema = z.object({ command: z.string().min(1).max(4000) });
 
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await ctx.params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const project = await findAccessibleProject(session.userId, id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   if (isRateLimited(`terminal-exec:${session.userId}`, 30, 60_000)) {

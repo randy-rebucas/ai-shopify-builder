@@ -378,11 +378,13 @@ function DeployPanel({
 }) {
   const [deploying, setDeploying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [planLimitHit, setPlanLimitHit] = useState(false);
   const [autoFixLog, setAutoFixLog] = useState<{ attempt: number; diagnosis: string }[]>([]);
 
   async function deploy() {
     setDeploying(true);
     setError(null);
+    setPlanLimitHit(false);
     setAutoFixLog([]);
     try {
       const res = await fetch(`/api/projects/${projectId}/deploy`, { method: "POST" });
@@ -390,6 +392,7 @@ function DeployPanel({
       if (Array.isArray(data.autoFixLog)) setAutoFixLog(data.autoFixLog);
       if (!res.ok) {
         setError(typeof data.error === "string" ? data.error : "Deploy failed");
+        if (data.code === "PLAN_LIMIT") setPlanLimitHit(true);
         onSaved({ ...status, status: "FAILED", error: typeof data.error === "string" ? data.error : "Deploy failed" });
         return;
       }
@@ -444,7 +447,19 @@ function DeployPanel({
           ))}
         </div>
       )}
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {error && (
+        <p className="mt-2 text-xs text-red-600">
+          {error}
+          {planLimitHit && (
+            <>
+              {" "}
+              <a href="/pricing" className="font-medium underline hover:no-underline">
+                View plans
+              </a>
+            </>
+          )}
+        </p>
+      )}
       {status.status === "FAILED" && status.error && !error && (
         <p className="mt-2 text-xs text-red-600">{status.error}</p>
       )}
@@ -470,10 +485,12 @@ function GithubPanel({
   const [connecting, setConnecting] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [planLimitHit, setPlanLimitHit] = useState(false);
   const [pushResult, setPushResult] = useState<string | null>(null);
 
   function connect() {
     setError(null);
+    setPlanLimitHit(false);
     setConnecting(true);
     const popup = window.open(
       `/api/github/oauth/start?projectId=${projectId}`,
@@ -495,6 +512,7 @@ function GithubPanel({
       setConnecting(false);
       if (!event.data.ok) {
         setError(typeof event.data.error === "string" ? event.data.error : "Failed to connect to GitHub");
+        if (event.data.code === "PLAN_LIMIT") setPlanLimitHit(true);
         return;
       }
       onConnected({ repoFullName: event.data.repoFullName, repoUrl: event.data.repoUrl });
@@ -519,12 +537,14 @@ function GithubPanel({
   async function push() {
     setPushing(true);
     setError(null);
+    setPlanLimitHit(false);
     setPushResult(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/github/push`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
         setError(typeof data.error === "string" ? data.error : "Failed to push to GitHub");
+        if (data.code === "PLAN_LIMIT") setPlanLimitHit(true);
         return;
       }
       setPushResult(`Pushed ${data.pushed} file(s).`);
@@ -579,7 +599,19 @@ function GithubPanel({
           </button>
         </div>
       )}
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {error && (
+        <p className="mt-2 text-xs text-red-600">
+          {error}
+          {planLimitHit && (
+            <>
+              {" "}
+              <a href="/pricing" className="font-medium underline hover:no-underline">
+                View plans
+              </a>
+            </>
+          )}
+        </p>
+      )}
     </div>
   );
 }
@@ -795,11 +827,320 @@ function DeployTabPanel({
   );
 }
 
+type ListingCategory = "TEMPLATE" | "COMPONENT" | "EXTENSION" | "COMPLETE_APP" | "PROMPT_PACK";
+
+const LISTING_CATEGORY_LABELS: Record<ListingCategory, string> = {
+  TEMPLATE: "Template",
+  COMPONENT: "Component",
+  EXTENSION: "Extension",
+  COMPLETE_APP: "Complete App",
+  PROMPT_PACK: "AI Prompt Pack",
+};
+
+interface PerformanceIssue {
+  file: string;
+  issue: string;
+  suggestion: string;
+}
+
+interface VersionEntry {
+  id: string;
+  createdAt: string;
+  summary: string;
+  fileCount: number;
+  isCurrent: boolean;
+}
+
+interface DeployAttemptEntry {
+  id: string;
+  status: "NONE" | "DEPLOYING" | "DEPLOYED" | "FAILED";
+  url: string | null;
+  error: string | null;
+  autoFixLog: { attempt: number; diagnosis: string }[] | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+function UpgradePrompt({ feature }: { feature: string }) {
+  return (
+    <div className="rounded-2xl border border-black/10 bg-black/[0.015] p-6 text-center">
+      <p className="text-sm font-medium text-black/70">{feature} isn&apos;t included in your current plan.</p>
+      <a
+        href="/pricing"
+        className="mt-3 inline-flex h-9 items-center justify-center rounded-full bg-black px-4 text-xs font-medium text-white transition hover:bg-black/85"
+      >
+        View plans
+      </a>
+    </div>
+  );
+}
+
+function HistoryTabPanel({
+  projectId,
+  hasGeneratedApp,
+  onRestored,
+}: {
+  projectId: string;
+  hasGeneratedApp: boolean;
+  onRestored: () => void;
+}) {
+  const [versions, setVersions] = useState<VersionEntry[] | null>(null);
+  const [versionsLocked, setVersionsLocked] = useState(false);
+  const [deploys, setDeploys] = useState<DeployAttemptEntry[] | null>(null);
+  const [deploysLocked, setDeploysLocked] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [debugError, setDebugError] = useState("");
+  const [debugging, setDebugging] = useState(false);
+  const [debugResult, setDebugResult] = useState<{ diagnosis: string; changed: boolean } | null>(null);
+  const [debugLocked, setDebugLocked] = useState(false);
+  const [debugFailure, setDebugFailure] = useState<string | null>(null);
+  const [perfRunning, setPerfRunning] = useState(false);
+  const [perfLocked, setPerfLocked] = useState(false);
+  const [perfResult, setPerfResult] = useState<{ summary: string; issues: PerformanceIssue[] } | null>(null);
+  const [perfFailure, setPerfFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/projects/${projectId}/versions`)
+      .then(async (res) => {
+        if (res.status === 403) return setVersionsLocked(true);
+        if (res.ok) setVersions(await res.json());
+      })
+      .catch(() => {});
+    fetch(`/api/projects/${projectId}/deploys`)
+      .then(async (res) => {
+        if (res.status === 403) return setDeploysLocked(true);
+        if (res.ok) setDeploys(await res.json());
+      })
+      .catch(() => {});
+  }, [projectId]);
+
+  async function restore(versionId: string) {
+    setRestoringId(versionId);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/versions/${versionId}/restore`, { method: "POST" });
+      if (res.ok) onRestored();
+    } finally {
+      setRestoringId(null);
+    }
+  }
+
+  async function runDebugger(e: React.FormEvent) {
+    e.preventDefault();
+    if (!debugError.trim() || debugging) return;
+    setDebugging(true);
+    setDebugResult(null);
+    setDebugFailure(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/debug`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: debugError }),
+      });
+      const data = await res.json();
+      if (res.status === 403) {
+        setDebugLocked(true);
+        return;
+      }
+      if (!res.ok) {
+        setDebugFailure(typeof data.error === "string" ? data.error : "Debugging failed.");
+        return;
+      }
+      setDebugResult({ diagnosis: data.diagnosis, changed: data.changed });
+      if (data.changed) onRestored();
+    } catch {
+      setDebugFailure("Debugging failed.");
+    } finally {
+      setDebugging(false);
+    }
+  }
+
+  async function runPerformanceAnalysis() {
+    if (perfRunning) return;
+    setPerfRunning(true);
+    setPerfResult(null);
+    setPerfFailure(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/performance`, { method: "POST" });
+      const data = await res.json();
+      if (res.status === 403) {
+        setPerfLocked(true);
+        return;
+      }
+      if (!res.ok) {
+        setPerfFailure(typeof data.error === "string" ? data.error : "Performance analysis failed.");
+        return;
+      }
+      setPerfResult(data);
+    } catch {
+      setPerfFailure("Performance analysis failed.");
+    } finally {
+      setPerfRunning(false);
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto p-6">
+      <div className="mx-auto w-full max-w-3xl space-y-8">
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-black">Version history</h2>
+          {versionsLocked ? (
+            <UpgradePrompt feature="Version history" />
+          ) : !versions ? (
+            <p className="text-xs text-black/40">Loading…</p>
+          ) : versions.length === 0 ? (
+            <p className="text-xs text-black/40">No versions yet — generate an app to start building history.</p>
+          ) : (
+            <ul className="divide-y divide-black/10 rounded-2xl border border-black/10">
+              {versions.map((v) => (
+                <li key={v.id} className="flex items-center justify-between gap-3 p-3.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-black">
+                      {v.summary}
+                      {v.isCurrent && (
+                        <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                          Current
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 text-xs text-black/40">
+                      {relativeTime(new Date(v.createdAt))} · {v.fileCount} file{v.fileCount === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  {!v.isCurrent && (
+                    <button
+                      onClick={() => restore(v.id)}
+                      disabled={restoringId === v.id}
+                      className="shrink-0 rounded-full border border-black/10 px-3 py-1.5 text-xs font-medium transition hover:bg-black/[0.03] disabled:opacity-50"
+                    >
+                      {restoringId === v.id ? "Restoring…" : "Restore"}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-black">AI debugger</h2>
+          {debugLocked ? (
+            <UpgradePrompt feature="The AI debugger" />
+          ) : (
+            <form onSubmit={runDebugger} className="rounded-2xl border border-black/10 p-4">
+              <label className="mb-1.5 block text-xs font-medium text-black/60">
+                Paste an error you&apos;re seeing and the AI will diagnose and patch it.
+              </label>
+              <textarea
+                value={debugError}
+                onChange={(e) => setDebugError(e.target.value)}
+                rows={4}
+                placeholder="TypeError: Cannot read properties of undefined..."
+                className="w-full resize-none rounded-lg border border-black/10 bg-black/[0.015] px-2.5 py-1.5 font-mono text-xs outline-none placeholder:text-black/30 focus:border-black/20"
+              />
+              <button
+                type="submit"
+                disabled={!hasGeneratedApp || !debugError.trim() || debugging}
+                className="mt-2.5 rounded-full bg-black px-4 py-2 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {debugging ? "Diagnosing…" : "Debug"}
+              </button>
+              {debugResult && (
+                <p className="mt-2.5 text-xs text-black/60">
+                  <span className="font-medium text-black">{debugResult.changed ? "Fixed:" : "Diagnosis:"}</span>{" "}
+                  {debugResult.diagnosis}
+                </p>
+              )}
+              {debugFailure && <p className="mt-2.5 text-xs text-red-600">{debugFailure}</p>}
+            </form>
+          )}
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-black">Performance analysis</h2>
+          {perfLocked ? (
+            <UpgradePrompt feature="Performance analysis" />
+          ) : (
+            <div className="rounded-2xl border border-black/10 p-4">
+              <p className="mb-2.5 text-xs text-black/50">
+                Have the AI review the generated code for N+1 queries, missing pagination, and other performance
+                issues.
+              </p>
+              <button
+                onClick={runPerformanceAnalysis}
+                disabled={!hasGeneratedApp || perfRunning}
+                className="rounded-full bg-black px-4 py-2 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {perfRunning ? "Analyzing…" : "Run analysis"}
+              </button>
+              {perfResult && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-black/70">{perfResult.summary}</p>
+                  {perfResult.issues.length > 0 && (
+                    <ul className="space-y-2">
+                      {perfResult.issues.map((issue, i) => (
+                        <li key={i} className="rounded-lg bg-amber-50 p-2.5 text-xs">
+                          <p className="font-mono text-amber-800">{issue.file}</p>
+                          <p className="mt-1 text-amber-900">{issue.issue}</p>
+                          <p className="mt-1 text-amber-700">→ {issue.suggestion}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {perfFailure && <p className="mt-2.5 text-xs text-red-600">{perfFailure}</p>}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-black">Build history</h2>
+          {deploysLocked ? (
+            <UpgradePrompt feature="Build history" />
+          ) : !deploys ? (
+            <p className="text-xs text-black/40">Loading…</p>
+          ) : deploys.length === 0 ? (
+            <p className="text-xs text-black/40">No deploy attempts yet.</p>
+          ) : (
+            <ul className="divide-y divide-black/10 rounded-2xl border border-black/10">
+              {deploys.map((d) => (
+                <li key={d.id} className="p-3.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span
+                      className={`text-xs font-medium ${
+                        d.status === "DEPLOYED"
+                          ? "text-emerald-700"
+                          : d.status === "FAILED"
+                            ? "text-red-600"
+                            : "text-black/50"
+                      }`}
+                    >
+                      {d.status === "DEPLOYED" ? "Deployed" : d.status === "FAILED" ? "Failed" : d.status}
+                    </span>
+                    <span className="text-xs text-black/40">{relativeTime(new Date(d.startedAt))}</span>
+                  </div>
+                  {d.error && <p className="mt-1 truncate text-xs text-red-600">{d.error}</p>}
+                  {d.autoFixLog && d.autoFixLog.length > 0 && (
+                    <p className="mt-1 text-xs text-amber-600">
+                      Auto-fixed after {d.autoFixLog.length} attempt{d.autoFixLog.length === 1 ? "" : "s"}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function ConfigurePanel({
   projectId,
   name,
   description,
   plan,
+  hasGeneratedApp,
   onSaved,
   onDeleted,
 }: {
@@ -807,6 +1148,7 @@ function ConfigurePanel({
   name: string;
   description: string | null;
   plan: AppPlan | null;
+  hasGeneratedApp: boolean;
   onSaved: (result: { name: string; description: string | null; plan: AppPlan | null }) => void;
   onDeleted: () => void;
 }) {
@@ -829,7 +1171,15 @@ function ConfigurePanel({
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [settingsTab, setSettingsTab] = useState<"general" | "integrations" | "danger">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "integrations" | "marketplace" | "danger">("general");
+  const [listingTitle, setListingTitle] = useState(name);
+  const [listingDescription, setListingDescription] = useState("");
+  const [listingCategory, setListingCategory] = useState<ListingCategory>("TEMPLATE");
+  const [listingPrice, setListingPrice] = useState("0");
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishLocked, setPublishLocked] = useState(false);
+  const [publishedListingId, setPublishedListingId] = useState<string | null>(null);
 
   if (name !== syncedName || description !== syncedDescription || plan !== syncedPlan) {
     setSyncedName(name);
@@ -899,6 +1249,42 @@ function ConfigurePanel({
     }
   }
 
+  async function publishListing(e: React.FormEvent) {
+    e.preventDefault();
+    if (publishing || !listingTitle.trim() || !listingDescription.trim()) return;
+    setPublishing(true);
+    setPublishError(null);
+    setPublishLocked(false);
+    try {
+      const priceCents = Math.round(Number(listingPrice || "0") * 100);
+      const res = await fetch("/api/marketplace/listings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          title: listingTitle.trim(),
+          description: listingDescription.trim(),
+          category: listingCategory,
+          priceCents: Number.isFinite(priceCents) ? Math.max(0, priceCents) : 0,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 403) {
+        setPublishLocked(true);
+        return;
+      }
+      if (!res.ok) {
+        setPublishError(typeof data.error === "string" ? data.error : "Couldn't publish this listing.");
+        return;
+      }
+      setPublishedListingId(data.id);
+    } catch {
+      setPublishError("Couldn't publish this listing.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   async function deleteProject() {
     if (deleting) return;
     setDeleting(true);
@@ -931,6 +1317,15 @@ function ConfigurePanel({
             strokeWidth="1.3"
             strokeLinecap="round"
           />
+        </svg>
+      ),
+    },
+    {
+      key: "marketplace" as const,
+      label: "Marketplace",
+      icon: (
+        <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" aria-hidden>
+          <path d="M2 5.5 3.2 2h9.6l1.2 3.5M2 5.5v7A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-7M2 5.5h12" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
         </svg>
       ),
     },
@@ -1190,6 +1585,91 @@ function ConfigurePanel({
               {planSaveError && <span className="text-xs text-red-600">{planSaveError}</span>}
             </div>
             </>
+          )}
+        </section>
+
+        <section className={`space-y-4 ${settingsTab === "marketplace" ? "" : "hidden"}`}>
+          <div>
+            <h2 className="text-sm font-semibold text-black">Publish to Marketplace</h2>
+            <p className="mt-0.5 text-xs text-black/40">
+              Publish the current generated app as a listing other builders can browse and install.
+            </p>
+          </div>
+
+          {publishLocked ? (
+            <div className="rounded-xl border border-black/10 bg-black/[0.015] p-4">
+              <p className="text-sm text-black/70">Marketplace publishing isn&apos;t included in your current plan.</p>
+              <a
+                href="/pricing"
+                className="mt-3 inline-flex h-9 items-center justify-center rounded-full bg-black px-4 text-xs font-medium text-white transition hover:bg-black/85"
+              >
+                View plans
+              </a>
+            </div>
+          ) : publishedListingId ? (
+            <div className="rounded-xl border border-black/10 bg-emerald-50 p-4">
+              <p className="text-sm text-emerald-700">✓ Published to the marketplace.</p>
+              <a href={`/marketplace/${publishedListingId}`} className="mt-2 inline-block text-xs font-medium underline hover:no-underline">
+                View listing
+              </a>
+            </div>
+          ) : (
+            <form onSubmit={publishListing} className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase text-black/40">Title</label>
+                <input
+                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                  value={listingTitle}
+                  onChange={(e) => setListingTitle(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium uppercase text-black/40">Description</label>
+                <textarea
+                  rows={3}
+                  className="w-full resize-none rounded-xl border border-black/10 px-3 py-2 text-sm"
+                  value={listingDescription}
+                  onChange={(e) => setListingDescription(e.target.value)}
+                  placeholder="What does this app do, and who is it for?"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase text-black/40">Category</label>
+                  <select
+                    className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                    value={listingCategory}
+                    onChange={(e) => setListingCategory(e.target.value as ListingCategory)}
+                  >
+                    {(Object.keys(LISTING_CATEGORY_LABELS) as ListingCategory[]).map((cat) => (
+                      <option key={cat} value={cat}>
+                        {LISTING_CATEGORY_LABELS[cat]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase text-black/40">Price (₱, 0 = free)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                    value={listingPrice}
+                    onChange={(e) => setListingPrice(e.target.value)}
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={!hasGeneratedApp || publishing || !listingTitle.trim() || !listingDescription.trim()}
+                className="rounded-full bg-black px-5 py-2 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {publishing ? "Publishing…" : "Publish"}
+              </button>
+              {!hasGeneratedApp && <p className="text-xs text-black/40">Generate the app before publishing it.</p>}
+              {publishError && <p className="text-xs text-red-600">{publishError}</p>}
+            </form>
           )}
         </section>
 
@@ -1858,7 +2338,7 @@ export function Workspace({
   const [plannedFiles, setPlannedFiles] = useState<PlannedFile[] | null>(null);
   const [completedPaths, setCompletedPaths] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"code" | "preview" | "deploy" | "settings">("code");
+  const [viewMode, setViewMode] = useState<"code" | "preview" | "deploy" | "history" | "settings">("code");
   const [showTerminal, setShowTerminal] = useState(false);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [appName, setAppName] = useState(project.name);
@@ -1994,6 +2474,7 @@ export function Workspace({
     { key: "code" as const, label: "Build" },
     { key: "preview" as const, label: "Preview" },
     { key: "deploy" as const, label: "Deploy" },
+    { key: "history" as const, label: "History" },
     { key: "settings" as const, label: "Settings" },
   ];
 
@@ -2222,12 +2703,19 @@ export function Workspace({
               router.refresh();
             }}
           />
+        ) : viewMode === "history" ? (
+          <HistoryTabPanel
+            projectId={project.id}
+            hasGeneratedApp={!!files && files.length > 0}
+            onRestored={() => router.refresh()}
+          />
         ) : viewMode === "settings" ? (
           <ConfigurePanel
             projectId={project.id}
             name={appName}
             description={appDescription}
             plan={plan}
+            hasGeneratedApp={!!files && files.length > 0}
             onSaved={(result) => {
               setAppName(result.name);
               setAppDescription(result.description);

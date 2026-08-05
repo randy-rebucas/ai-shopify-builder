@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { Logo } from "@/components/logo";
 import { UserMenu } from "@/components/user-menu";
 import { ProjectsPanel } from "@/components/projects-panel";
+import { listAccessibleProjects } from "@/lib/project-access";
 import { NewProjectForm } from "./new-project-form";
 
 export default async function DashboardPage() {
@@ -13,10 +14,7 @@ export default async function DashboardPage() {
 
   const [user, projects] = await Promise.all([
     prisma.user.findUnique({ where: { id: session.userId }, select: { name: true, email: true } }),
-    prisma.project.findMany({
-      where: { userId: session.userId },
-      orderBy: { updatedAt: "desc" },
-    }),
+    listAccessibleProjects(session.userId),
   ]);
 
   return (
@@ -24,6 +22,15 @@ export default async function DashboardPage() {
       <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-6">
         <Logo />
         <div className="flex items-center gap-4">
+          <Link
+            href="/marketplace"
+            className="hidden items-center gap-1.5 text-sm text-black/60 transition hover:text-black sm:flex"
+          >
+            <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" aria-hidden>
+              <path d="M2 5.5 3.2 2h9.6l1.2 3.5M2 5.5v7A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-7M2 5.5h12" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+            </svg>
+            Marketplace
+          </Link>
           <Link
             href="https://shopify.dev"
             target="_blank"
