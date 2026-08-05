@@ -1,6 +1,7 @@
 import { spawn, execFile } from "child_process";
 import { promisify } from "util";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, readFile } from "fs/promises";
+import { createHash } from "crypto";
 import { tmpdir } from "os";
 import path from "path";
 import { materialize } from "./deploy";
@@ -17,11 +18,21 @@ const MAX_OUTPUT_BYTES = 1_000_000;
 // platform services, only out to the public internet (needed for npm install etc).
 const SANDBOX_NETWORK = "ai-shopify-terminal-sandbox";
 
-// Custom image (docker/terminal-sandbox.Dockerfile) built on top of node:20-alpine, adding openssl
-// (required by Prisma's query engine on musl), git, curl, and native-module build tools — a bare
-// node:20-alpine is missing all of these.
-const SANDBOX_IMAGE = "ai-shopify-terminal-sandbox:latest";
+// Custom image (docker/terminal-sandbox.Dockerfile) built on top of node:lts-alpine, adding
+// openssl (required by Prisma's query engine on musl), git, curl, bash, native-module build tools,
+// and the Shopify CLI — a bare node:lts-alpine is missing all of these.
 const SANDBOX_DOCKERFILE = path.join(process.cwd(), "docker", "terminal-sandbox.Dockerfile");
+
+// Tagged by a hash of the Dockerfile's own content rather than a fixed `:latest` — ensureImage()
+// below only builds when the tag is missing, so a static tag would mean editing the Dockerfile has
+// no effect on any host that already built the old image once. Hashing the tag makes every content
+// change (this one, and any future tool additions) naturally trigger a fresh build with no manual
+// cache-busting step; old tags from previous Dockerfile versions are simply left orphaned.
+async function sandboxImageTag(): Promise<string> {
+  const dockerfile = await readFile(SANDBOX_DOCKERFILE);
+  const hash = createHash("sha256").update(dockerfile).digest("hex").slice(0, 12);
+  return `ai-shopify-terminal-sandbox:${hash}`;
+}
 
 interface Session {
   projectId: string;
@@ -40,16 +51,18 @@ async function ensureNetwork(): Promise<void> {
   }
 }
 
-async function ensureSandboxImage(): Promise<void> {
+async function ensureSandboxImage(): Promise<string> {
+  const image = await sandboxImageTag();
   try {
-    await execFileAsync("docker", ["image", "inspect", SANDBOX_IMAGE]);
+    await execFileAsync("docker", ["image", "inspect", image]);
   } catch {
     await execFileAsync(
       "docker",
-      ["build", "-f", SANDBOX_DOCKERFILE, "-t", SANDBOX_IMAGE, path.dirname(SANDBOX_DOCKERFILE)],
+      ["build", "-f", SANDBOX_DOCKERFILE, "-t", image, path.dirname(SANDBOX_DOCKERFILE)],
       { timeout: 5 * 60_000 },
     );
   }
+  return image;
 }
 
 async function reap(): Promise<void> {
@@ -75,7 +88,7 @@ export async function startSession(projectId: string, files: GeneratedFile[]): P
   }
 
   await ensureNetwork();
-  await ensureSandboxImage();
+  const image = await ensureSandboxImage();
 
   const dir = await mkdtemp(path.join(tmpdir(), "ai-shopify-terminal-"));
   await materialize(files, dir);
@@ -95,7 +108,7 @@ export async function startSession(projectId: string, files: GeneratedFile[]): P
     `${dir}:/workspace`,
     "-w",
     "/workspace",
-    SANDBOX_IMAGE,
+    image,
     "sh",
     "-c",
     "sleep infinity",

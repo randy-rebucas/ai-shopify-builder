@@ -162,7 +162,7 @@ Restrained and unornamented across the board — confidence expressed through re
 - **Style:** A flat header bar — logo left, text links + one pill CTA right. No background, no shadow, no active-state underline observed; relies on the pill CTA and plain text link color shift (`black/70` → `black`) for wayfinding.
 
 ### Logomark (Signature Component)
-A rounded-square (`rx=8`) black tile containing a white padlock/pouch glyph, with a small solid Spark Indigo dot at the top-right corner — the one place the accent lives permanently in the UI. This dot is the system's signature: any new "AI is present" indicator elsewhere should echo it rather than invent a new motif.
+A raster brand mark (`public/logo-mark.png`, cropped from `public/logo.png`): a green Shopify shopping-bag glyph with a paintbrush laid across it, rendered on a transparent background. Rendered via `LogoMark` in `@/components/logo` as an `<img>`, not an inline SVG — this is a fixed illustrated asset, not a system-drawn icon, so it is exempt from the single-stroke-weight icon rule elsewhere in this document. Used at small sizes (`h-7 w-7` in headers, `h-5 w-5` in the footer) paired with the "AI Shopify Builder" wordmark in `Logo`.
 
 ## Do's and Don'ts
 

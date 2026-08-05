@@ -1,10 +1,11 @@
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { Client } from "pg";
 import type { GeneratedFile } from "./ai/generate";
+import { filterSafeGeneratedFiles } from "./generated-file-path";
 
 const execFileAsync = promisify(execFile);
 
@@ -60,8 +61,16 @@ export function flyAppNameFor(projectId: string, projectName: string): string {
 }
 
 export async function materialize(files: GeneratedFile[], dir: string): Promise<void> {
-  for (const file of files) {
-    const target = path.join(dir, file.path);
+  const { safe, rejected } = filterSafeGeneratedFiles(files);
+  if (rejected.length > 0) {
+    console.warn(`materialize: skipped ${rejected.length} unsafe generated file path(s):`, rejected);
+  }
+  const root = path.resolve(dir);
+  for (const file of safe) {
+    const target = path.resolve(root, file.path);
+    // Belt-and-suspenders on top of filterSafeGeneratedFiles: confirm the resolved path still
+    // lands inside `root` before touching the filesystem.
+    if (target !== root && !target.startsWith(root + path.sep)) continue;
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, file.content, "utf8");
   }
@@ -118,6 +127,12 @@ async function ensureApp(appName: string, org: string): Promise<void> {
  * resolves on Fly's private network, we reach it the same way `flyctl postgres connect` does: tunnel in
  * via `flyctl proxy`, talk to it as if it were local, then tear the tunnel down.
  */
+function assertSafeSqlIdentifier(identifier: string): void {
+  if (!/^[a-z_][a-z0-9_]*$/.test(identifier)) {
+    throw new Error(`Refusing to use "${identifier}" as a SQL identifier — contains disallowed characters.`);
+  }
+}
+
 async function ensureDatabase(dbName: string): Promise<void> {
   const pgApp = requireEnv("FLY_POSTGRES_APP");
   const password = requireEnv("FLY_POSTGRES_PASSWORD");
@@ -154,6 +169,11 @@ async function ensureDatabase(dbName: string): Promise<void> {
     try {
       const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [dbName]);
       if (exists.rowCount === 0) {
+        // Postgres doesn't support parameterized identifiers, so this has to be string-interpolated.
+        // dbName is already restricted to [a-z0-9_] by slugifyAppSlug at the call site, but assert
+        // it again here — right next to the query — so this stays safe even if that upstream
+        // sanitization is ever loosened, instead of relying on it silently staying correct forever.
+        assertSafeSqlIdentifier(dbName);
         await client.query(`CREATE DATABASE "${dbName}"`);
       }
     } finally {
@@ -164,9 +184,34 @@ async function ensureDatabase(dbName: string): Promise<void> {
   }
 }
 
+// Deliberately NOT `runFly(["secrets", "set", "-a", appName, "KEY=value", ...])` — passing secret
+// values as CLI arguments puts them in `ps`/`/proc/<pid>/cmdline` output on the host for as long as
+// the process runs, AND (confirmed) gets them echoed verbatim into the thrown Error's message on
+// failure (Node's execFile includes the full command+args in "Command failed: ..." errors), which
+// this app then truncates and stores/returns as `deployError`/`installError` — a real plaintext
+// secret leak into the database and back to the client on any transient flyctl failure. `flyctl
+// secrets import` reads NAME=VALUE pairs from stdin instead, so no secret value ever appears in
+// argv or in a command-echo error message.
 async function setSecrets(appName: string, dir: string, secrets: Record<string, string>): Promise<void> {
-  const args = ["secrets", "set", "-a", appName, ...Object.entries(secrets).map(([k, v]) => `${k}=${v}`)];
-  await runFly(args, { cwd: dir });
+  const bin = process.env.FLYCTL_PATH || "flyctl";
+  const input = Object.entries(secrets)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(bin, ["secrets", "import", "-a", appName], { cwd: dir, env: flyEnv() });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`flyctl secrets import failed (exit ${code}): ${stderr.slice(0, 2000)}`));
+    });
+    child.stdin.write(input);
+    child.stdin.end();
+  });
 }
 
 export interface DeployResult {

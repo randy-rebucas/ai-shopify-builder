@@ -5,6 +5,8 @@ import { getSession } from "@/lib/auth";
 import { deployProject, isDeployConfigured } from "@/lib/deploy";
 import { decryptSecret } from "@/lib/crypto";
 import { fixFromError, type GeneratedFile, type GenerationPlan } from "@/lib/ai/generate";
+import { isRateLimited } from "@/lib/rate-limit";
+import { redactSecrets } from "@/lib/redact";
 
 const MAX_AUTO_FIX_ATTEMPTS = 2;
 
@@ -29,6 +31,12 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ id: st
 export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Each call spins up a real Fly deploy (and up to two AI auto-fix cycles) — expensive in both
+  // compute and external API cost, so it gets its own limit rather than relying on generate's.
+  if (isRateLimited(`deploy:${session.userId}`, 5, 60_000)) {
+    return NextResponse.json({ error: "Too many deploy requests. Try again in a minute." }, { status: 429 });
+  }
 
   const { id } = await ctx.params;
   const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
@@ -58,7 +66,7 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
     extraSecrets.SHOPIFY_ADMIN_ACCESS_TOKEN = decryptSecret(existingConfig.shopifyAdminAccessTokenCiphertext);
   }
 
-  let plan = latestApp.plan as unknown as GenerationPlan;
+  const plan = latestApp.plan as unknown as GenerationPlan;
   let files = latestApp.files as unknown as GeneratedFile[];
   const autoFixLog: { attempt: number; diagnosis: string }[] = [];
 
@@ -84,7 +92,14 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
 
       return NextResponse.json({ status: "DEPLOYED", url: result.url, autoFixed: autoFixLog.length > 0, autoFixLog });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Deploy failed";
+      const rawMessage = error instanceof Error ? error.message : "Deploy failed";
+      // Defense in depth: scrub any secret value that might have ended up in an error message
+      // (e.g. from an external tool's own output) before it's stored or returned to the client.
+      const message = redactSecrets(rawMessage, [
+        ...Object.values(extraSecrets),
+        process.env.FLY_API_TOKEN,
+        process.env.FLY_POSTGRES_PASSWORD,
+      ]);
 
       if (attempt >= MAX_AUTO_FIX_ATTEMPTS) {
         await prisma.deploymentConfig.update({

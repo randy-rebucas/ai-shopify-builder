@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { filterSafeGeneratedFiles } from "@/lib/generated-file-path";
 
 function slugify(name: string): string {
   return (
@@ -29,8 +30,16 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     return NextResponse.json({ error: "No generated files to download yet" }, { status: 404 });
   }
 
+  // Reject any path with traversal segments or that's absolute — a malicious/prompt-injected path
+  // like "../../../../.bashrc" would otherwise produce a zip-slip archive that writes outside the
+  // extraction directory when a user later extracts it with a naive/vulnerable unzip tool.
+  const { safe, rejected } = filterSafeGeneratedFiles(files);
+  if (rejected.length > 0) {
+    console.warn(`download: skipped ${rejected.length} unsafe generated file path(s):`, rejected);
+  }
+
   const zip = new JSZip();
-  for (const file of files) {
+  for (const file of safe) {
     zip.file(file.path, file.content);
   }
   // Compress first, then hand back the finished archive — no uncompressed intermediate response.

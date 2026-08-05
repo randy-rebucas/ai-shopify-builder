@@ -12,6 +12,7 @@ import {
 import type { GenerationPlan, GeneratedFile } from "@/lib/ai/generate";
 import type { ChatMessageInput } from "@/lib/ai/types";
 import { generateRandomAppName } from "@/lib/random-name";
+import { isRateLimited } from "@/lib/rate-limit";
 
 const MAX_CLARIFICATION_ROUNDS = 3;
 
@@ -27,6 +28,12 @@ type ProgressEvent =
 export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Each call triggers multiple AI provider requests (planning + generation, tens of seconds) —
+  // unlike the other project routes, this one has real per-request cost, so it needs its own limit.
+  if (isRateLimited(`generate:${session.userId}`, 10, 60_000)) {
+    return NextResponse.json({ error: "Too many generation requests. Try again in a minute." }, { status: 429 });
+  }
 
   const { id } = await ctx.params;
   const requestStartedAt = Date.now();

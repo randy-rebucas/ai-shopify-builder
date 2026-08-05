@@ -140,6 +140,16 @@ else admin-side.
 
 If sufficient is true, "question" must be null.`;
 
+const ENHANCE_SYSTEM_PROMPT = `You rewrite a rough, one-line Shopify app feature idea into a clearer, more specific
+build request for an AI app generator. Keep the user's original intent and scope exactly — do not invent unrelated
+features, do not expand into a bigger app than what was implied, do not add marketing language.
+
+Make the request concrete: name the specific data being tracked, the specific admin actions a merchant would take,
+and any obvious edge cases worth handling, when they're reasonably implied by the original idea. Keep it to 2-4
+sentences of plain English, written as a request ("Build a ... that ..."), not a spec document or bullet list.
+
+Respond with ONLY the rewritten request text — no preamble, no quotes, no markdown formatting.`;
+
 export interface GenerationPlan {
   summary: string;
   features: string[];
@@ -185,6 +195,16 @@ export async function assessSpecificity(
     // Fail open — a triage hiccup shouldn't block the user from ever generating.
     return { sufficient: true, question: null };
   }
+}
+
+export async function enhancePrompt(prompt: string): Promise<string> {
+  const provider = getAIProvider("claude");
+  const raw = await provider.complete({
+    system: ENHANCE_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: prompt }],
+    maxTokens: 300,
+  });
+  return raw.trim();
 }
 
 export async function generateFromPlan(plan: GenerationPlan, appName: string): Promise<GeneratedFile[]> {

@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { normalizeShopDomain, verifyAdminAccessToken } from "@/lib/shopify";
 import { setAppSecrets } from "@/lib/deploy";
+import { redactSecrets } from "@/lib/redact";
 
 const bodySchema = z.object({
   shopDomain: z.string().min(1),
@@ -79,7 +80,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
           SHOPIFY_ADMIN_ACCESS_TOKEN: adminAccessToken,
         });
       } catch (secretError) {
-        const message = secretError instanceof Error ? secretError.message : "Failed to push secrets to the deployed app";
+        const rawMessage =
+          secretError instanceof Error ? secretError.message : "Failed to push secrets to the deployed app";
+        const message = redactSecrets(rawMessage, [adminAccessToken]);
         return NextResponse.json({
           status: "INSTALLED",
           shopDomain,
@@ -97,7 +100,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       grantedScopes: shopInfo.scopes,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to verify the Shopify access token";
+    const rawMessage = error instanceof Error ? error.message : "Failed to verify the Shopify access token";
+    const message = redactSecrets(rawMessage, [adminAccessToken]);
     await prisma.deploymentConfig.upsert({
       where: { projectId: id },
       create: { projectId: id, installStatus: "FAILED", installError: message.slice(0, 2000) },

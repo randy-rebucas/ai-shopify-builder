@@ -1,10 +1,9 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { deriveKey } from "./derive-key";
 
-if (!process.env.AUTH_SECRET) {
-  throw new Error("AUTH_SECRET environment variable must be set — it's also used to derive the credentials encryption key.");
-}
-// Derive a 32-byte AES key from AUTH_SECRET so no separate key needs to be provisioned.
-const key = createHash("sha256").update(process.env.AUTH_SECRET).digest();
+// Purpose-scoped subkey derived from AUTH_SECRET (see derive-key.ts) — independent from the keys
+// auth.ts uses for session/OAuth-state JWTs, so a compromise of one doesn't imply the others.
+const key = deriveKey("ai-shopify-builder:secret-encryption");
 
 export function encryptSecret(plaintext: string): string {
   const iv = randomBytes(12);

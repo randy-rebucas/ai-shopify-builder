@@ -9,7 +9,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   if (!session) redirect("/login");
 
   const { id } = await params;
-  const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });
+  const [project, user] = await Promise.all([
+    prisma.project.findFirst({ where: { id, userId: session.userId } }),
+    prisma.user.findUnique({ where: { id: session.userId }, select: { name: true, email: true } }),
+  ]);
   if (!project) notFound();
 
   const messages = await prisma.chatMessage.findMany({
@@ -34,6 +37,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         githubRepoFullName: project.githubRepoFullName,
         githubRepoUrl: project.githubRepoUrl,
       }}
+      user={{ name: user?.name ?? null, email: user?.email ?? session.email }}
       initialDeployment={{
         appVersion: deploymentConfig?.appVersion ?? "0.1.0",
         shopifyOrgId: deploymentConfig?.shopifyOrgId ?? null,

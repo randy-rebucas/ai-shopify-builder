@@ -1,3 +1,5 @@
+import { filterSafeGeneratedFiles, isUnderGithubDir } from "./generated-file-path";
+
 const API_BASE = "https://api.github.com";
 const OAUTH_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -98,8 +100,17 @@ export async function pushFiles(
   files: { path: string; content: string }[],
   commitMessage: string,
 ): Promise<{ pushed: number }> {
+  // Reject traversal/absolute paths, and specifically block writes under .github/ — pushing a
+  // generated file there (e.g. a workflow YAML) would run with whatever privileges/secrets this
+  // repo has, using the connecting user's own OAuth token. This is a generated-code repo, not a
+  // place the AI should ever be defining CI.
+  const { safe, rejected } = filterSafeGeneratedFiles(files, (p) => !isUnderGithubDir(p));
+  if (rejected.length > 0) {
+    console.warn(`pushFiles: skipped ${rejected.length} unsafe/disallowed generated file path(s):`, rejected);
+  }
+
   let pushed = 0;
-  for (const file of files) {
+  for (const file of safe) {
     const contentsUrl = `${API_BASE}/repos/${fullName}/contents/${file.path
       .split("/")
       .map(encodeURIComponent)

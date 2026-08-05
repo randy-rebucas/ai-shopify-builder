@@ -1,26 +1,25 @@
 import * as React from "react";
 import type { ReactNode } from "react";
+import * as Babel from "@babel/standalone/babel.min.js";
+import * as Polaris from "@shopify/polaris";
+import previewLoopGuardPlugin from "./preview-loop-guard";
 
 // Runtime used to compile + execute a generated admin route for the in-browser Preview tab.
 // This module only ever runs inside the sandboxed preview iframe (see workspace.tsx's
-// PreviewFrame, served from the static /preview-frame.html + preview-frame-bundle.js — see
-// scripts/build-preview-frame.mjs), never in the parent app's document — generated code is
-// effectively untrusted (it's LLM output, shaped by user chat input), so it must not run anywhere
-// that has access to the user's real session cookies, localStorage, or the parent DOM.
+// PreviewFrame, served from the static /preview-frame.html + preview-frame-bundle.js, bundled by
+// scripts/build-preview-frame.mjs via esbuild), never in the parent app's document — generated
+// code is effectively untrusted (it's LLM output, shaped by user chat input), so it must not run
+// anywhere that has access to the user's real session cookies, localStorage, or the parent DOM.
 //
-// It takes its Babel and Polaris-shim dependencies as parameters rather than importing them, so
-// this file has no dependency graph beyond "react" — that keeps the bundling script simple (one
-// `require("react")` to resolve) instead of needing to trace and rewrite `@babel/standalone` and
-// path-aliased imports into the bundle's own module registry.
+// The GENERATED code compiled and run by renderPreviewComponent below is untrusted and still gets
+// dynamically Babel-transpiled + `new Function`-executed at preview time — that can't be avoided,
+// since it's arbitrary runtime content pulled from the database, not something esbuild can see
+// ahead of time. This module's OWN dependencies (Babel, the real @shopify/polaris) are ordinary
+// static imports, though — esbuild resolves and bundles those normally.
 
 export interface GeneratedFile {
   path: string;
   content: string;
-}
-
-export interface PreviewRuntimeDeps {
-  babel: { transform: (source: string, options: Record<string, unknown>) => { code?: string | null } };
-  polarisShim: Record<string, unknown>;
 }
 
 // Loader data has no real shape in the preview (no server ran), so any field — at any depth —
@@ -99,9 +98,10 @@ const dbServerShim = new Proxy(
   },
 );
 
-function transpilePreviewModule(babel: PreviewRuntimeDeps["babel"], source: string): string {
-  const result = babel.transform(source, {
+function transpilePreviewModule(source: string): string {
+  const result = Babel.transform(source, {
     presets: [["env", { modules: "commonjs" }], ["react", { runtime: "classic" }]],
+    plugins: [previewLoopGuardPlugin],
     filename: "preview.jsx",
   });
   return result.code ?? "";
@@ -124,13 +124,13 @@ function findGeneratedFile(files: GeneratedFile[], resolvedNoExt: string): Gener
 
 const MAX_PREVIEW_MODULES = 10;
 
-// The Polaris shim only implements a lookalike for the handful of components most generated
-// screens use — but codegen is free to import anything from the real @shopify/polaris package
-// (see CODEGEN_SYSTEM_PROMPT), so an unimplemented component name would otherwise resolve to
-// `undefined` and crash the whole preview with a cryptic "Element type is invalid" React error.
-// Wrap the shim in a Proxy so any missing export (including nested ones, e.g. `Modal.Section` on
-// a `Modal` we don't implement) instead renders as a clearly-labeled placeholder — the preview
-// degrades to "one box looks like a stub" rather than not rendering at all.
+// This is the real @shopify/polaris package now, so it covers the vast majority of what codegen
+// might import — but codegen is still free to reference something that doesn't exist in whatever
+// Polaris version is pinned here (a renamed/removed component, a typo'd name), which would
+// otherwise resolve to `undefined` and crash the whole preview with a cryptic "Element type is
+// invalid" React error. Wrap the module in a Proxy so any missing export (including nested ones,
+// e.g. `Modal.Section` if `Modal` itself were ever missing) instead renders as a clearly-labeled
+// placeholder — the preview degrades to "one box looks like a stub" rather than not rendering.
 function createFallbackPolarisComponent(name: string): React.ComponentType<{ children?: ReactNode }> {
   const Fallback = ({ children }: { children?: ReactNode }) =>
     React.createElement(
@@ -159,8 +159,8 @@ function createFallbackPolarisComponent(name: string): React.ComponentType<{ chi
   }) as React.ComponentType<{ children?: ReactNode }>;
 }
 
-function withPolarisFallbacks(shim: Record<string, unknown>): Record<string, unknown> {
-  return new Proxy(shim, {
+function withPolarisFallbacks(mod: Record<string, unknown>): Record<string, unknown> {
+  return new Proxy(mod, {
     get: (target, prop, receiver) =>
       prop in target || typeof prop === "symbol"
         ? Reflect.get(target, prop, receiver)
@@ -168,11 +168,9 @@ function withPolarisFallbacks(shim: Record<string, unknown>): Record<string, unk
   });
 }
 
-export function renderPreviewComponent(
-  files: GeneratedFile[],
-  entry: GeneratedFile,
-  deps: PreviewRuntimeDeps,
-): React.ComponentType {
+const polarisWithFallbacks = withPolarisFallbacks(Polaris as unknown as Record<string, unknown>);
+
+export function renderPreviewComponent(files: GeneratedFile[], entry: GeneratedFile): React.ComponentType {
   const cache = new Map<string, unknown>();
   let moduleCount = 0;
 
@@ -182,11 +180,11 @@ export function renderPreviewComponent(
     if (moduleCount > MAX_PREVIEW_MODULES) {
       throw new Error("This screen imports too many local files to preview.");
     }
-    const code = transpilePreviewModule(deps.babel, file.content);
+    const code = transpilePreviewModule(file.content);
     const moduleObj: { exports: Record<string, unknown> } = { exports: {} };
     const requireShim = (spec: string): unknown => {
       if (spec === "react") return React;
-      if (spec === "@shopify/polaris") return withPolarisFallbacks(deps.polarisShim);
+      if (spec === "@shopify/polaris") return polarisWithFallbacks;
       if (spec === "@remix-run/react") return remixReactShim;
       if (spec === "@remix-run/node") return remixNodeShim;
       if (spec.endsWith("shopify.server")) return shopifyServerShim;

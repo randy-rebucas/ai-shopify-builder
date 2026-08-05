@@ -3,10 +3,17 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { startSession } from "@/lib/terminal";
 import type { GeneratedFile } from "@/lib/ai/generate";
+import { isRateLimited } from "@/lib/rate-limit";
 
 export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Each call can spin up a Docker container — cheap to no-op for an already-running session (see
+  // startSession's early return), but still worth bounding repeated cold-starts per user.
+  if (isRateLimited(`terminal-start:${session.userId}`, 10, 60_000)) {
+    return NextResponse.json({ error: "Too many terminal start requests. Try again in a minute." }, { status: 429 });
+  }
 
   const { id } = await ctx.params;
   const project = await prisma.project.findFirst({ where: { id, userId: session.userId } });

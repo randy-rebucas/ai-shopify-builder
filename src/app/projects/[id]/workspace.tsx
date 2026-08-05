@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { LogoMark } from "@/components/logo";
+import { Logo } from "@/components/logo";
 import { StatusBadge } from "@/components/status-badge";
 import { CodeBlock } from "@/components/code-highlight";
+import { UserMenu } from "@/components/user-menu";
+import { relativeTime } from "@/lib/format-time";
 
 interface Message {
   id: string;
@@ -410,10 +412,10 @@ function DeployPanel({
 
   return (
     <div className="rounded-xl border border-black/10 p-4">
-      <label className="mb-1 block text-xs font-medium uppercase text-black/40">Deploy</label>
+      <label className="mb-1 block text-xs font-medium uppercase text-black/40">Build, Test &amp; Deploy</label>
       <p className="mb-3 text-xs text-black/40">
-        Builds and ships the generated app to hosting. If the build fails, we&apos;ll automatically diagnose the
-        error, patch the code, and retry once before giving up.
+        Builds the generated app in a container (that build is the test gate), then ships it to hosting. If the
+        build fails, we&apos;ll automatically diagnose the error, patch the code, and retry once before giving up.
       </p>
 
       {status.status === "DEPLOYED" && status.url && (
@@ -582,41 +584,230 @@ function GithubPanel({
   );
 }
 
-function ConfigurePanel({
+function DeploySectionHeading({ icon, title }: { icon: ReactNode; title: string }) {
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-black/5 text-black/50">
+        {icon}
+      </span>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-black/50">{title}</h3>
+    </div>
+  );
+}
+
+function DeployTabPanel({
   projectId,
-  name,
-  description,
-  plan,
   hasGeneratedApp,
+  plan,
   githubRepoFullName,
   githubRepoUrl,
   deploymentStatus,
   installStatus,
   deployStatus,
-  onSaved,
   onGithubConnected,
   onGithubDisconnected,
   onDeploymentSaved,
   onInstallSaved,
   onDeploySaved,
+}: {
+  projectId: string;
+  hasGeneratedApp: boolean;
+  plan: AppPlan | null;
+  githubRepoFullName: string | null;
+  githubRepoUrl: string | null;
+  deploymentStatus: DeploymentStatus;
+  installStatus: InstallStatus;
+  deployStatus: DeployStatus;
+  onGithubConnected: (result: { repoFullName: string | null; repoUrl: string | null }) => void;
+  onGithubDisconnected: () => void;
+  onDeploymentSaved: (status: DeploymentStatus) => void;
+  onInstallSaved: (status: InstallStatus) => void;
+  onDeploySaved: (status: DeployStatus) => void;
+}) {
+  const hostingLabel = deploymentStatus.hostingProvider
+    ? HOSTING_PROVIDER_LABELS[deploymentStatus.hostingProvider as (typeof HOSTING_PROVIDERS)[number]] ??
+      deploymentStatus.hostingProvider
+    : "Not configured";
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto p-6">
+      <div className="mx-auto w-full max-w-3xl space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-black">Deploy</h2>
+            <p className="mt-0.5 text-xs text-black/40">
+              Push code to your host and install the app on a Shopify store — each step below is independent.
+            </p>
+          </div>
+          {deployStatus.status === "DEPLOYED" && deployStatus.url && (
+            <a
+              href={deployStatus.url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-xs font-medium text-white transition hover:bg-black/85"
+            >
+              View live app
+              <svg viewBox="0 0 16 16" fill="none" className="h-3 w-3" aria-hidden>
+                <path
+                  d="M6.5 4.5h5v5M11.3 4.7 4.5 11.5"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </a>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-black/10 p-4">
+          <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-black/50">Deploy summary</div>
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+            <dl className="space-y-2.5 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-black/45">Hosting provider</dt>
+                <dd className="font-medium text-black/80">{hostingLabel}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-black/45">App version</dt>
+                <dd className="font-medium text-black/80">{deploymentStatus.appVersion}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-black/45">Shopify store</dt>
+                <dd className="truncate font-medium text-black/80">
+                  {installStatus.status === "INSTALLED" && installStatus.shopDomain
+                    ? installStatus.shopDomain
+                    : "Not installed"}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-black/45">Last deploy</dt>
+                <dd className="font-medium text-black/80">
+                  {deployStatus.deployedAt ? relativeTime(new Date(deployStatus.deployedAt)) : "Never"}
+                </dd>
+              </div>
+            </dl>
+
+            <div className="rounded-xl bg-black/[0.025] p-3.5">
+              <p className="mb-2 text-xs font-medium text-black/60">What&apos;s included</p>
+              {plan && plan.features.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-1.5 text-xs text-black/60">
+                      <svg viewBox="0 0 16 16" fill="none" className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600" aria-hidden>
+                        <path d="M3.5 8.5 6.5 11.5 12.5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span className="leading-snug">{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-black/40">Generate the app to see what&apos;s included.</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-black/10 p-4">
+          <DeploySectionHeading
+            title="Source"
+            icon={
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 fill-current" aria-hidden>
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+              </svg>
+            }
+          />
+          <GithubPanel
+            projectId={projectId}
+            hasGeneratedApp={hasGeneratedApp}
+            repoFullName={githubRepoFullName}
+            repoUrl={githubRepoUrl}
+            onConnected={onGithubConnected}
+            onDisconnected={onGithubDisconnected}
+          />
+        </div>
+
+        <div className="rounded-2xl border border-black/10 p-4">
+          <DeploySectionHeading
+            title="Hosting"
+            icon={
+              <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+                <rect x="1.5" y="3" width="13" height="4" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                <rect x="1.5" y="9" width="13" height="4" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                <circle cx="4" cy="5" r="0.6" fill="currentColor" />
+                <circle cx="4" cy="11" r="0.6" fill="currentColor" />
+              </svg>
+            }
+          />
+          <DeploymentPanel projectId={projectId} status={deploymentStatus} onSaved={onDeploymentSaved} />
+        </div>
+
+        <div className="rounded-2xl border border-black/10 p-4">
+          <DeploySectionHeading
+            title="Shopify store"
+            icon={
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-current" aria-hidden>
+                <path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z" />
+              </svg>
+            }
+          />
+          <InstallPanel projectId={projectId} status={installStatus} onSaved={onInstallSaved} />
+        </div>
+
+        <div className="rounded-2xl border border-black/10 p-4">
+          <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-black/50">Recent deployment</div>
+          {deployStatus.status === "DEPLOYED" && deployStatus.deployedAt ? (
+            <div className="flex items-center gap-3 rounded-xl border border-black/10 px-3.5 py-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+                  <path d="M3.5 8.5 6.5 11.5 12.5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-black">v{deploymentStatus.appVersion}</p>
+                {deployStatus.url && (
+                  <a href={deployStatus.url} target="_blank" rel="noreferrer" className="block truncate text-xs text-black/50 underline">
+                    {deployStatus.url}
+                  </a>
+                )}
+              </div>
+              <span className="shrink-0 text-xs text-black/40">{relativeTime(new Date(deployStatus.deployedAt))}</span>
+            </div>
+          ) : deployStatus.status === "FAILED" ? (
+            <div className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50 px-3.5 py-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600">
+                <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+                  <path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </span>
+              <p className="min-w-0 flex-1 truncate text-sm text-red-700">Last deploy failed</p>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-dashed border-black/15 px-3.5 py-4 text-center text-xs text-black/40">
+              No deployments yet — deploy below to see it here.
+            </p>
+          )}
+        </div>
+
+        <DeployPanel projectId={projectId} status={deployStatus} hasGeneratedApp={hasGeneratedApp} onSaved={onDeploySaved} />
+      </div>
+    </div>
+  );
+}
+
+function ConfigurePanel({
+  projectId,
+  name,
+  description,
+  plan,
+  onSaved,
   onDeleted,
 }: {
   projectId: string;
   name: string;
   description: string | null;
   plan: AppPlan | null;
-  hasGeneratedApp: boolean;
-  githubRepoFullName: string | null;
-  githubRepoUrl: string | null;
-  deploymentStatus: DeploymentStatus;
-  installStatus: InstallStatus;
-  deployStatus: DeployStatus;
   onSaved: (result: { name: string; description: string | null; plan: AppPlan | null }) => void;
-  onGithubConnected: (result: { repoFullName: string | null; repoUrl: string | null }) => void;
-  onGithubDisconnected: () => void;
-  onDeploymentSaved: (status: DeploymentStatus) => void;
-  onInstallSaved: (status: InstallStatus) => void;
-  onDeploySaved: (status: DeployStatus) => void;
   onDeleted: () => void;
 }) {
   const [formName, setFormName] = useState(name);
@@ -728,27 +919,58 @@ function ConfigurePanel({
   }
 
   const SETTINGS_TABS = [
-    { key: "general" as const, label: "General & plan" },
-    { key: "integrations" as const, label: "Integrations & deploy" },
-    { key: "danger" as const, label: "Danger zone" },
+    {
+      key: "general" as const,
+      label: "General",
+      icon: (
+        <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" aria-hidden>
+          <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.3" />
+          <path
+            d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.2 3.8l-1.1 1.1M4.9 11.1l-1.1 1.1M12.2 12.2l-1.1-1.1M4.9 4.9 3.8 3.8"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+          />
+        </svg>
+      ),
+    },
+    {
+      key: "danger" as const,
+      label: "Danger zone",
+      icon: (
+        <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" aria-hidden>
+          <path d="M8 1.5 14.5 13h-13L8 1.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+          <path d="M8 6.3v3M8 11.3h.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+      ),
+    },
   ];
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex gap-1 border-b border-black/10 px-6 pt-4">
-        {SETTINGS_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setSettingsTab(tab.key)}
-            className={`rounded-t-lg px-3 py-2 text-xs font-medium transition ${
-              settingsTab === tab.key
-                ? "border-b-2 border-black text-black"
-                : "border-b-2 border-transparent text-black/40 hover:text-black/70"
-            } ${tab.key === "danger" && settingsTab === tab.key ? "border-red-600 text-red-700" : ""}`}
-          >
-            {tab.label}
-          </button>
-        ))}
+    <div className="flex h-full overflow-hidden">
+      <div className="w-52 shrink-0 overflow-y-auto border-r border-black/10 px-3 py-5">
+        <div className="mb-4 px-2">
+          <h1 className="text-sm font-semibold text-black">Settings</h1>
+          <p className="mt-0.5 text-xs text-black/40">Manage this project.</p>
+        </div>
+        <nav className="space-y-0.5">
+          {SETTINGS_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setSettingsTab(tab.key)}
+              className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition ${
+                settingsTab === tab.key
+                  ? tab.key === "danger"
+                    ? "bg-red-50 text-red-700"
+                    : "bg-black/[0.05] text-black"
+                  : "text-black/50 hover:bg-black/[0.03] hover:text-black"
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
+        </nav>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 text-sm">
@@ -825,7 +1047,7 @@ function ConfigurePanel({
                       onLoad={() => setLogoError(false)}
                     />
                   ) : (
-                    <span className="text-[10px] text-black/30">No icon</span>
+                    <span className="text-xs text-black/30">No icon</span>
                   )}
                 </div>
                 <div className="flex-1">
@@ -971,35 +1193,6 @@ function ConfigurePanel({
           )}
         </section>
 
-        <section className={`space-y-4 ${settingsTab === "integrations" ? "" : "hidden"}`}>
-          <div>
-            <h2 className="text-sm font-semibold text-black">Integrations & deploy</h2>
-            <p className="mt-0.5 text-xs text-black/40">
-              Source control, hosting credentials, storefront install, and deployment — each independent of the others.
-            </p>
-          </div>
-
-          <GithubPanel
-            projectId={projectId}
-            hasGeneratedApp={hasGeneratedApp}
-            repoFullName={githubRepoFullName}
-            repoUrl={githubRepoUrl}
-            onConnected={onGithubConnected}
-            onDisconnected={onGithubDisconnected}
-          />
-
-          <DeploymentPanel projectId={projectId} status={deploymentStatus} onSaved={onDeploymentSaved} />
-
-          <InstallPanel projectId={projectId} status={installStatus} onSaved={onInstallSaved} />
-
-          <DeployPanel
-            projectId={projectId}
-            status={deployStatus}
-            hasGeneratedApp={hasGeneratedApp}
-            onSaved={onDeploySaved}
-          />
-        </section>
-
         <section className={`space-y-3 ${settingsTab === "danger" ? "" : "hidden"}`}>
           <div>
             <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
@@ -1135,20 +1328,46 @@ interface TerminalLine {
   id: number;
   kind: "command" | "stdout" | "stderr" | "system";
   text: string;
+  at: number;
 }
 
-function TerminalPanel({ projectId, hasGeneratedApp }: { projectId: string; hasGeneratedApp: boolean }) {
+function formatClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function TerminalPanel({
+  projectId,
+  appName,
+  storeDomain,
+  hasGeneratedApp,
+}: {
+  projectId: string;
+  appName: string;
+  storeDomain: string | null;
+  hasGeneratedApp: boolean;
+}) {
   const [lines, setLines] = useState<TerminalLine[]>([]);
   const [input, setInput] = useState("");
   const [starting, setStarting] = useState(false);
   const [started, setStarted] = useState(false);
   const [running, setRunning] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const nextId = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   function pushLine(kind: TerminalLine["kind"], text: string) {
-    setLines((prev) => [...prev, { id: nextId.current++, kind, text }]);
+    setLines((prev) => [...prev, { id: nextId.current++, kind, text, at: Date.now() }]);
+  }
+
+  function copyLog() {
+    const text = lines.map((l) => (l.kind === "command" ? `$ ${l.text}` : l.text)).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   }
 
   useEffect(() => {
@@ -1167,6 +1386,7 @@ function TerminalPanel({ projectId, hasGeneratedApp }: { projectId: string; hasG
           return;
         }
         setStarted(true);
+        setStartedAt(Date.now());
         pushLine("system", "Session ready. Files from the latest generation are mounted at /workspace.");
       } catch {
         if (!cancelled) setStartError("Failed to start terminal session");
@@ -1253,27 +1473,118 @@ function TerminalPanel({ projectId, hasGeneratedApp }: { projectId: string; hasG
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#0b0b0d]">
+    <div className={`flex min-h-0 flex-1 flex-col bg-[#0b0b0d] ${fullscreen ? "fixed inset-3 z-40 rounded-2xl shadow-2xl" : ""}`}>
+      <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-2">
+        <span className="text-xs font-medium text-white/70">Terminal</span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setLines([])}
+            disabled={lines.length === 0}
+            title="Clear"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+              <path
+                d="M3 4.5h10M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4.5 4.5 5 13a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.5-8.5"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={copyLog}
+            disabled={lines.length === 0}
+            title="Copy log"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            {copied ? (
+              <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5 text-emerald-400" aria-hidden>
+                <path d="M3.5 8.5 6.5 11.5 12.5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+                <rect x="5.5" y="5.5" width="8" height="8" rx="1.3" stroke="currentColor" strokeWidth="1.3" />
+                <path d="M3.5 10.5V3.3A1.3 1.3 0 0 1 4.8 2h7.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              </svg>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setFullscreen((v) => !v)}
+            title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/10 hover:text-white"
+          >
+            <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+              {fullscreen ? (
+                <path
+                  d="M6.5 2v2.5A2 2 0 0 1 4.5 6.5H2M9.5 2v2.5a2 2 0 0 0 2 2H14M6.5 14v-2.5a2 2 0 0 0-2-2H2M9.5 14v-2.5a2 2 0 0 1 2-2H14"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ) : (
+                <path
+                  d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              )}
+            </svg>
+          </button>
+        </div>
+      </div>
+
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 font-mono text-[13px] leading-relaxed"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 font-mono text-sm leading-relaxed"
       >
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-white/10 p-3.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#6366f1]/15 text-[#6366f1]">
+            <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden>
+              <path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z" />
+            </svg>
+          </span>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+            <dt className="text-white/40">App</dt>
+            <dd className="text-white/80">{appName}</dd>
+            <dt className="text-white/40">Store</dt>
+            <dd className="text-white/80">{storeDomain ?? "Not installed"}</dd>
+            <dt className="text-white/40">Session</dt>
+            <dd className="text-white/80">{started ? "Ready" : starting ? "Starting…" : "Not started"}</dd>
+            {startedAt && (
+              <>
+                <dt className="text-white/40">Started</dt>
+                <dd className="text-white/80">{formatClock(startedAt)}</dd>
+              </>
+            )}
+          </dl>
+        </div>
+
         {starting && <p className="text-white/60">Starting sandbox…</p>}
         {startError && <p className="break-words text-red-400">{startError}</p>}
         {lines.map((line) => (
-          <div
-            key={line.id}
-            className={`break-words whitespace-pre-wrap ${
-              line.kind === "command"
-                ? "text-emerald-400"
-                : line.kind === "stderr"
-                  ? "text-red-400"
-                  : line.kind === "system"
-                    ? "text-white/60"
-                    : "text-white/90"
-            }`}
-          >
-            {line.kind === "command" ? `$ ${line.text}` : line.text}
+          <div key={line.id} className="flex items-baseline gap-3">
+            <span
+              className={`min-w-0 flex-1 break-words whitespace-pre-wrap ${
+                line.kind === "command"
+                  ? "text-emerald-400"
+                  : line.kind === "stderr"
+                    ? "text-red-400"
+                    : line.kind === "system"
+                      ? "text-white/60"
+                      : "text-white/90"
+              }`}
+            >
+              {line.kind === "command" ? `$ ${line.text}` : line.text}
+            </span>
+            <span className="shrink-0 text-xs text-white/25">{formatClock(line.at)}</span>
           </div>
         ))}
         {started && lines.length === 0 && !starting && (
@@ -1282,7 +1593,7 @@ function TerminalPanel({ projectId, hasGeneratedApp }: { projectId: string; hasG
       </div>
       <form onSubmit={runCommand} className="flex gap-2 border-t border-white/10 p-3">
         <input
-          className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-[13px] text-white outline-none focus:border-white/25"
+          className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-white outline-none focus:border-white/25"
           placeholder={started ? "Run a command…" : "Waiting for sandbox…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -1343,37 +1654,113 @@ function PreviewPanel({ files, appName }: { files: GeneratedFile[]; appName: str
   );
   const [selectedPath, setSelectedPath] = useState<string | null>(previewFiles[0]?.path ?? null);
   const selected = previewFiles.find((f) => f.path === selectedPath) ?? previewFiles[0] ?? null;
+  const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const toolbar = (
+    <div className="flex shrink-0 items-center gap-2 border-b border-black/10 bg-white px-3 py-2">
+      <div className="flex items-center gap-0.5 rounded-full border border-black/10 bg-black/[0.02] p-1">
+        <button
+          type="button"
+          onClick={() => setDevice("desktop")}
+          aria-pressed={device === "desktop"}
+          title="Desktop width"
+          className={`flex h-6 w-6 items-center justify-center rounded-full transition ${
+            device === "desktop" ? "bg-black text-white" : "text-black/40 hover:text-black"
+          }`}
+        >
+          <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+            <rect x="1.5" y="2.5" width="13" height="8.5" rx="1" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M5.5 13.5h5M8 11v2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDevice("mobile")}
+          aria-pressed={device === "mobile"}
+          title="Mobile width"
+          className={`flex h-6 w-6 items-center justify-center rounded-full transition ${
+            device === "mobile" ? "bg-black text-white" : "text-black/40 hover:text-black"
+          }`}
+        >
+          <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+            <rect x="4.5" y="1.5" width="7" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M7 12.2h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 truncate rounded-full border border-black/10 bg-black/[0.02] px-3 py-1 text-xs text-black/50">
+        <svg viewBox="0 0 16 16" fill="none" className="h-3 w-3 shrink-0" aria-hidden>
+          <path
+            d="M6.5 9.5a2.2 2.2 0 0 0 3.1 0l1.6-1.6a2.2 2.2 0 0 0-3.1-3.1L7 5.9M9.5 6.5a2.2 2.2 0 0 0-3.1 0L4.8 8.1a2.2 2.2 0 0 0 3.1 3.1L9 10.1"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span className="truncate font-mono">/app/{previewBlockLabel(selected?.path ?? "")}</span>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setReloadKey((k) => k + 1)}
+        title="Reload preview"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-black/10 text-black/50 transition hover:border-black/20 hover:text-black"
+      >
+        <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+          <path
+            d="M13 8A5 5 0 1 1 11.5 4.3M13 2v3h-3"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+    </div>
+  );
 
   if (previewFiles.length === 0) {
     return (
-      <AdminChrome appName={appName}>
-        <div className="flex h-full flex-col items-center justify-center gap-1 p-10 text-center">
-          <p className="text-sm font-medium text-black/50">No admin screen to preview yet</p>
-          <p className="text-xs text-black/35">
-            Generated files don&apos;t include an app/routes/app.* screen or a .liquid block.
-          </p>
-        </div>
-      </AdminChrome>
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        {toolbar}
+        <AdminChrome appName={appName}>
+          <div className="flex h-full flex-col items-center justify-center gap-1 p-10 text-center">
+            <p className="text-sm font-medium text-black/50">No admin screen to preview yet</p>
+            <p className="text-xs text-black/35">
+              Generated files don&apos;t include an app/routes/app.* screen or a .liquid block.
+            </p>
+          </div>
+        </AdminChrome>
+      </div>
     );
   }
 
   return (
-    <AdminChrome appName={appName}>
-      <div className="flex flex-wrap gap-1.5 border-b border-black/5 bg-white px-4 py-2">
-        {previewFiles.map((f) => (
-          <button
-            key={f.path}
-            onClick={() => setSelectedPath(f.path)}
-            className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
-              selected?.path === f.path ? "bg-black text-white" : "bg-black/5 text-black/60 hover:bg-black/10"
-            }`}
-          >
-            {previewBlockLabel(f.path)}
-          </button>
-        ))}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {toolbar}
+      <div className={`flex min-h-0 flex-1 ${device === "mobile" ? "justify-center overflow-y-auto bg-black/[0.03] py-4" : ""}`}>
+        <div className={device === "mobile" ? "h-[720px] w-[390px] shrink-0 overflow-hidden rounded-2xl border border-black/10 shadow-md" : "min-h-0 flex-1"}>
+          <AdminChrome appName={appName}>
+            <div className="flex flex-wrap gap-1.5 border-b border-black/5 bg-white px-4 py-2">
+              {previewFiles.map((f) => (
+                <button
+                  key={f.path}
+                  onClick={() => setSelectedPath(f.path)}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                    selected?.path === f.path ? "bg-black text-white" : "bg-black/5 text-black/60 hover:bg-black/10"
+                  }`}
+                >
+                  {previewBlockLabel(f.path)}
+                </button>
+              ))}
+            </div>
+            <PreviewFrame key={reloadKey} files={files} entry={selected!} />
+          </AdminChrome>
+        </div>
       </div>
-      <PreviewFrame files={files} entry={selected!} />
-    </AdminChrome>
+    </div>
   );
 }
 
@@ -1439,6 +1826,7 @@ function PreviewFrame({ files, entry }: { files: GeneratedFile[]; entry: Generat
 
 export function Workspace({
   project,
+  user,
   initialMessages,
   initialFiles,
   initialPlan,
@@ -1454,6 +1842,7 @@ export function Workspace({
     githubRepoFullName?: string | null;
     githubRepoUrl?: string | null;
   };
+  user: { name: string | null; email: string };
   initialMessages: Message[];
   initialFiles: GeneratedFile[] | null;
   initialPlan: AppPlan | null;
@@ -1472,7 +1861,8 @@ export function Workspace({
   const [plannedFiles, setPlannedFiles] = useState<PlannedFile[] | null>(null);
   const [completedPaths, setCompletedPaths] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"code" | "preview" | "settings" | "terminal">("code");
+  const [viewMode, setViewMode] = useState<"code" | "preview" | "deploy" | "settings">("code");
+  const [showTerminal, setShowTerminal] = useState(false);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [appName, setAppName] = useState(project.name);
   const [appDescription, setAppDescription] = useState<string | null>(project.description ?? null);
@@ -1603,26 +1993,69 @@ export function Workspace({
     }
   }
 
+  const NAV_TABS = [
+    { key: "code" as const, label: "Build" },
+    { key: "preview" as const, label: "Preview" },
+    { key: "deploy" as const, label: "Deploy" },
+    { key: "settings" as const, label: "Settings" },
+  ];
+
   return (
-    <div className="flex h-screen flex-col gap-3 bg-black/[0.02] p-3 sm:flex-row">
+    <div className="flex h-screen flex-col bg-black/[0.02]">
+      <header className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-black/10 bg-white px-4 py-2.5">
+        <Link href="/dashboard" title="Back to dashboard" className="w-fit">
+          <Logo />
+        </Link>
+
+        <nav className="flex items-center gap-1">
+          {NAV_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setViewMode(tab.key)}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                viewMode === tab.key ? "bg-black/[0.06] text-black" : "text-black/50 hover:text-black"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="flex justify-end">
+          <UserMenu name={user.name} email={user.email} />
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1 gap-3 p-3 sm:flex-row">
       <div className="flex w-full flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm sm:w-[400px] sm:shrink-0">
         <div className="flex items-center justify-between border-b border-black/10 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link href="/dashboard" title="Back to dashboard" className="shrink-0">
-              <LogoMark className="h-7 w-7" />
-            </Link>
+          <div className="flex min-w-0 items-center gap-2">
             <Link
               href="/dashboard"
-              className="flex shrink-0 items-center gap-1 text-sm text-black/50 hover:text-black"
+              title="Back to dashboard"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-black/40 transition hover:bg-black/5 hover:text-black"
             >
-              <span aria-hidden>←</span> Back
+              <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" aria-hidden>
+                <path d="M9.5 3.5 5 8l4.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </Link>
-            <div className="h-5 w-px shrink-0 bg-black/10" />
             <div className="min-w-0">
               <h1 className="truncate font-semibold leading-tight">{appName}</h1>
               <StatusBadge status={project.status} />
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setViewMode("settings")}
+            title="Project settings"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-black/40 transition hover:bg-black/5 hover:text-black"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="h-4 w-4" aria-hidden>
+              <circle cx="3" cy="8" r="1.4" />
+              <circle cx="8" cy="8" r="1.4" />
+              <circle cx="13" cy="8" r="1.4" />
+            </svg>
+          </button>
         </div>
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -1652,11 +2085,15 @@ export function Workspace({
                     return (
                       <li key={f.path} className="flex items-center gap-2 text-xs text-black/60">
                         <span
-                          className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-[9px] leading-none ${
+                          className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full ${
                             isDone ? "bg-emerald-500 text-white" : "border border-black/20"
                           }`}
                         >
-                          {isDone ? "✓" : ""}
+                          {isDone && (
+                            <svg viewBox="0 0 16 16" fill="none" className="h-2 w-2" aria-hidden>
+                              <path d="M3.5 8.5 6.5 11.5 12.5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
                         </span>
                         <span className={`truncate font-mono ${isDone ? "text-black/70" : ""}`}>{f.path}</span>
                       </li>
@@ -1709,23 +2146,28 @@ export function Workspace({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-black/10 px-3 py-2">
-          <div className="flex gap-1 rounded-full bg-black/5 p-1">
-            {(["code", "preview", "settings", "terminal"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
-                  viewMode === mode ? "bg-black text-white shadow-sm" : "text-black/60 hover:text-black"
-                }`}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center justify-end border-b border-black/10 px-3 py-2">
           <div className="flex min-w-0 items-center gap-3">
             {viewMode === "code" && activeFile && (
               <span className="truncate font-mono text-xs text-black/40">{activeFile}</span>
+            )}
+            {viewMode === "code" && (
+              <button
+                type="button"
+                onClick={() => setShowTerminal((v) => !v)}
+                aria-pressed={showTerminal}
+                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
+                  showTerminal
+                    ? "border-black/20 bg-black/5 text-black"
+                    : "border-black/10 text-black/60 hover:border-black/20 hover:text-black"
+                }`}
+              >
+                <svg viewBox="0 0 16 16" fill="none" className="h-3 w-3 shrink-0" aria-hidden>
+                  <path d="M2.5 4.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.2" />
+                  <path d="M4.2 7 6 8.5 4.2 10M7.5 10h2.3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Terminal
+              </button>
             )}
             {files && files.length > 0 && (
               <a
@@ -1750,24 +2192,16 @@ export function Workspace({
 
         {viewMode === "preview" ? (
           <PreviewPanel files={files ?? []} appName={appName} />
-        ) : viewMode === "settings" ? (
-          <ConfigurePanel
+        ) : viewMode === "deploy" ? (
+          <DeployTabPanel
             projectId={project.id}
-            name={appName}
-            description={appDescription}
-            plan={plan}
             hasGeneratedApp={!!files && files.length > 0}
+            plan={plan}
             githubRepoFullName={githubRepoFullName}
             githubRepoUrl={githubRepoUrl}
             deploymentStatus={deploymentStatus}
             installStatus={installStatus}
             deployStatus={deployStatus}
-            onSaved={(result) => {
-              setAppName(result.name);
-              setAppDescription(result.description);
-              setPlan(result.plan);
-              router.refresh();
-            }}
             onGithubConnected={(result) => {
               setGithubRepoFullName(result.repoFullName);
               setGithubRepoUrl(result.repoUrl);
@@ -1790,43 +2224,70 @@ export function Workspace({
               setDeployStatus(status);
               router.refresh();
             }}
+          />
+        ) : viewMode === "settings" ? (
+          <ConfigurePanel
+            projectId={project.id}
+            name={appName}
+            description={appDescription}
+            plan={plan}
+            onSaved={(result) => {
+              setAppName(result.name);
+              setAppDescription(result.description);
+              setPlan(result.plan);
+              router.refresh();
+            }}
             onDeleted={() => {
               router.push("/dashboard");
               router.refresh();
             }}
           />
-        ) : viewMode === "terminal" ? (
-          <TerminalPanel projectId={project.id} hasGeneratedApp={!!files && files.length > 0} />
-        ) : files && files.length > 0 ? (
-          <div className="flex min-h-0 flex-1">
-            <div className="w-56 shrink-0 overflow-y-auto border-r border-black/10 bg-black/[0.015] p-2">
-              <FileTree
-                nodes={fileTree}
-                activeFile={activeFile}
-                onSelect={setActiveFile}
-                collapsed={collapsedDirs}
-                onToggleDir={toggleDir}
-              />
-            </div>
-
-            <div className="min-w-0 flex-1 bg-[#0b0b0d]">
-              <div className="flex items-center gap-1.5 border-b border-white/10 px-4 py-2.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-                <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-                <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-                <span className="ml-2 truncate font-mono text-xs text-white/40">{activeFile}</span>
-              </div>
-              <div className="h-[calc(100%-41px)] overflow-auto p-4">
-                {activeContent && <CodeBlock code={activeContent.content} />}
-              </div>
-            </div>
-          </div>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
-            <p className="text-sm font-medium text-black/50">Generated files will appear here</p>
-            <p className="text-xs text-black/35">Send a message describing your app to get started.</p>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {files && files.length > 0 ? (
+              <div className="flex min-h-0 flex-1">
+                <div className="w-56 shrink-0 overflow-y-auto border-r border-black/10 bg-black/[0.015] p-2">
+                  <FileTree
+                    nodes={fileTree}
+                    activeFile={activeFile}
+                    onSelect={setActiveFile}
+                    collapsed={collapsedDirs}
+                    onToggleDir={toggleDir}
+                  />
+                </div>
+
+                <div className="min-w-0 flex-1 bg-[#0b0b0d]">
+                  <div className="flex items-center gap-1.5 border-b border-white/10 px-4 py-2.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+                    <span className="ml-2 truncate font-mono text-xs text-white/40">{activeFile}</span>
+                  </div>
+                  <div className="h-[calc(100%-41px)] overflow-auto p-4">
+                    {activeContent && <CodeBlock code={activeContent.content} />}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                <p className="text-sm font-medium text-black/50">Generated files will appear here</p>
+                <p className="text-xs text-black/35">Send a message describing your app to get started.</p>
+              </div>
+            )}
+
+            {showTerminal && (
+              <div className="h-64 shrink-0 border-t border-black/10">
+                <TerminalPanel
+                  projectId={project.id}
+                  appName={appName}
+                  storeDomain={installStatus.status === "INSTALLED" ? installStatus.shopDomain : null}
+                  hasGeneratedApp={!!files && files.length > 0}
+                />
+              </div>
+            )}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

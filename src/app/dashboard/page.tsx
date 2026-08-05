@@ -3,36 +3,52 @@ import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Logo } from "@/components/logo";
-import { StatusBadge } from "@/components/status-badge";
-import { relativeTime } from "@/lib/format-time";
+import { UserMenu } from "@/components/user-menu";
+import { ProjectsPanel } from "@/components/projects-panel";
 import { NewProjectForm } from "./new-project-form";
 
 export default async function DashboardPage() {
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const projects = await prisma.project.findMany({
-    where: { userId: session.userId },
-    orderBy: { updatedAt: "desc" },
-  });
+  const [user, projects] = await Promise.all([
+    prisma.user.findUnique({ where: { id: session.userId }, select: { name: true, email: true } }),
+    prisma.project.findMany({
+      where: { userId: session.userId },
+      orderBy: { updatedAt: "desc" },
+    }),
+  ]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-black/[0.03] to-transparent">
       <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-6">
         <Logo />
-        <form action="/api/auth/logout" method="post">
-          <button
-            className="rounded-full text-sm text-black/65 transition hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
-            type="submit"
+        <div className="flex items-center gap-4">
+          <Link
+            href="https://shopify.dev"
+            target="_blank"
+            rel="noreferrer"
+            className="hidden items-center gap-1.5 text-sm text-black/60 transition hover:text-black sm:flex"
           >
-            Log out
-          </button>
-        </form>
+            <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" aria-hidden>
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M6.2 6.3a1.8 1.8 0 1 1 2.6 1.6c-.6.3-.8.6-.8 1.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <circle cx="8" cy="11.1" r="0.15" fill="currentColor" stroke="currentColor" strokeWidth="1" />
+            </svg>
+            Help
+          </Link>
+          {user && <UserMenu name={user.name} email={user.email} />}
+        </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 pb-20">
+      <main className="mx-auto max-w-5xl px-4 pb-16">
         <div className="mx-auto max-w-2xl pt-10 pb-14 text-center">
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">What do you want to build?</h1>
+          <h1 className="flex items-center justify-center gap-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+            What do you want to build?
+            <svg viewBox="0 0 16 16" fill="#6366f1" className="h-6 w-6 shrink-0 sm:h-7 sm:w-7" aria-hidden>
+              <path d="M8 1.5 9 6l4.5 1L9 8l-1 4.5L7 8 2.5 7 7 6l1-4.5Z" />
+            </svg>
+          </h1>
           <p className="mt-3 text-black/50">
             Describe a Shopify app feature in plain English. AI plans it, writes the code, and gets it
             ready to ship.
@@ -42,55 +58,58 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-black/60">
-            Your projects{projects.length > 0 && ` (${projects.length})`}
-          </h2>
-        </div>
-
-        {projects.length > 0 ? (
-          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((project) => (
-              <li key={project.id}>
-                <Link
-                  href={`/projects/${project.id}`}
-                  className="group flex h-full flex-col justify-between rounded-2xl border border-black/10 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-black/20 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6366f1]"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="line-clamp-2 font-medium leading-snug">{project.name}</span>
-                    <svg
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      className="mt-0.5 h-4 w-4 shrink-0 text-black/25 transition group-hover:translate-x-0.5 group-hover:text-black/50"
-                      aria-hidden
-                    >
-                      <path
-                        d="M3 8h10M8.5 3.5 13 8l-4.5 4.5"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </div>
-                  {project.description && (
-                    <p className="mt-1 line-clamp-2 text-sm text-black/60">{project.description}</p>
-                  )}
-                  <div className="mt-4 flex items-center justify-between">
-                    <StatusBadge status={project.status} />
-                    <span className="text-xs text-black/60">{relativeTime(project.updatedAt)}</span>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-black/15 py-16 text-center">
-            <p className="text-sm font-medium text-black/60">No projects yet</p>
-            <p className="text-sm text-black/60">Describe an idea above to build your first app.</p>
-          </div>
-        )}
+        <ProjectsPanel
+          projects={projects.map((p) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            status: p.status,
+            updatedAt: p.updatedAt.toISOString(),
+          }))}
+        />
       </main>
+
+      <footer className="border-t border-black/10">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-xs text-black/45">
+          <div className="flex items-center gap-4">
+            <Link
+              href="https://shopify.dev/docs/apps"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 transition hover:text-black"
+            >
+              <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+                <path
+                  d="M3 3.5h4a1.5 1.5 0 0 1 1.5 1.5v7A1.2 1.2 0 0 0 7.3 11H3V3.5ZM13 3.5H9a1.5 1.5 0 0 0-1.5 1.5v7A1.2 1.2 0 0 1 8.7 11H13V3.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Documentation
+            </Link>
+            <Link
+              href="https://shopify.dev/docs/api"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 transition hover:text-black"
+            >
+              <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden>
+                <path
+                  d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              API Reference
+            </Link>
+          </div>
+          <span>Built for Shopify merchants and developers</span>
+          <span>© {new Date().getFullYear()} AI Shopify Builder</span>
+        </div>
+      </footer>
     </div>
   );
 }

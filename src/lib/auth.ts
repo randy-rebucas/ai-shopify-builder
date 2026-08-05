@@ -1,13 +1,15 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
+import { deriveKey } from "./derive-key";
 
 const SESSION_COOKIE = "session";
 
-if (!process.env.AUTH_SECRET) {
-  throw new Error("AUTH_SECRET environment variable must be set — refusing to sign sessions with a default secret.");
-}
-const secret = new TextEncoder().encode(process.env.AUTH_SECRET);
+// Purpose-scoped subkeys derived from AUTH_SECRET (see derive-key.ts) rather than using the raw
+// secret directly — session and OAuth-state JWTs are signed with different keys from each other,
+// and both are independent from the secret-encryption key in crypto.ts.
+const sessionSecret = deriveKey("ai-shopify-builder:session-jwt");
+const oauthStateSecret = deriveKey("ai-shopify-builder:oauth-state-jwt");
 
 export interface SessionPayload {
   userId: string;
@@ -27,7 +29,7 @@ export async function createSession(payload: SessionPayload): Promise<void> {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
-    .sign(secret);
+    .sign(sessionSecret);
 
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
@@ -45,7 +47,7 @@ export async function getSession(): Promise<SessionPayload | null> {
   if (!token) return null;
 
   try {
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, sessionSecret);
     return { userId: payload.userId as string, email: payload.email as string };
   } catch {
     return null;
@@ -68,12 +70,12 @@ export async function signOAuthState(payload: OAuthStatePayload): Promise<string
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("10m")
-    .sign(secret);
+    .sign(oauthStateSecret);
 }
 
 export async function verifyOAuthState(token: string): Promise<OAuthStatePayload | null> {
   try {
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, oauthStateSecret);
     return {
       purpose: payload.purpose as string,
       userId: payload.userId as string,
