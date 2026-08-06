@@ -1,9 +1,13 @@
 import { redirect, notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { isDeployConfigured } from "@/lib/deploy";
 import { findAccessibleProject } from "@/lib/project-access";
 import { Workspace } from "./workspace";
+import { noIndex } from "@/lib/seo";
+
+export const metadata: Metadata = { title: "Project", robots: noIndex };
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

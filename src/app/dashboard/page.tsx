@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Logo } from "@/components/logo";
@@ -7,6 +8,9 @@ import { UserMenu } from "@/components/user-menu";
 import { ProjectsPanel } from "@/components/projects-panel";
 import { listAccessibleProjects } from "@/lib/project-access";
 import { NewProjectForm } from "./new-project-form";
+import { noIndex } from "@/lib/seo";
+
+export const metadata: Metadata = { title: "Dashboard", robots: noIndex };
 
 export default async function DashboardPage() {
   const session = await getSession();

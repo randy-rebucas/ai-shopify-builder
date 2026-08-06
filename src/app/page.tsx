@@ -2,6 +2,24 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { Logo, LogoMark } from "@/components/logo";
+import { siteUrl, siteName, defaultDescription } from "@/lib/seo";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: siteName,
+  description: defaultDescription,
+  url: siteUrl,
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "Web",
+  offers: {
+    "@type": "AggregateOffer",
+    lowPrice: "0",
+    highPrice: "99",
+    priceCurrency: "USD",
+    offerCount: "3",
+  },
+};
 
 function SparkleIcon() {
   return (
@@ -98,6 +116,10 @@ export default async function Home() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-white text-black">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
         <Logo />
         <nav className="flex items-center gap-2">

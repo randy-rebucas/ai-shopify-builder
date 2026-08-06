@@ -1,9 +1,13 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Logo } from "@/components/logo";
 import { BuyButton } from "./buy-button";
+import { noIndex } from "@/lib/seo";
+
+export const metadata: Metadata = { title: "Marketplace listing", robots: noIndex };
 
 const CATEGORY_LABELS: Record<string, string> = {
   TEMPLATE: "Template",

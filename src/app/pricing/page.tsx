@@ -1,8 +1,22 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { getSession } from "@/lib/auth";
 import { Logo } from "@/components/logo";
 import type { BillablePlan } from "@/lib/plans";
 import { UpgradeButton } from "./upgrade-button";
+
+export const metadata: Metadata = {
+  title: "Pricing",
+  description:
+    "Simple, transparent pricing for AI Shopify Builder. Start free, then upgrade for more projects, stores, and AI credits.",
+  alternates: { canonical: "/pricing" },
+  openGraph: {
+    title: "Pricing · AI Shopify Builder",
+    description:
+      "Simple, transparent pricing for AI Shopify Builder. Start free, then upgrade for more projects, stores, and AI credits.",
+    url: "/pricing",
+  },
+};
 
 function CheckIcon() {
   return (

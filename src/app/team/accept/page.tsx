@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
 import { getSession } from "@/lib/auth";
 import { AcceptInviteClient } from "./accept-invite-client";
+import { noIndex } from "@/lib/seo";
+
+export const metadata: Metadata = { title: "Accept team invite", robots: noIndex };
 
 export default async function TeamAcceptPage({
   searchParams,

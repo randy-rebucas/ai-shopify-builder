@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Logo } from "@/components/logo";
@@ -8,6 +9,9 @@ import { getProjectCount, getConnectedStoreCount, getEffectivePlan } from "@/lib
 import { ProfileForm } from "./profile-form";
 import { CancelSubscriptionButton } from "./cancel-subscription-button";
 import { TeamPanel } from "./team-panel";
+import { noIndex } from "@/lib/seo";
+
+export const metadata: Metadata = { title: "Account", robots: noIndex };
 import { CreatorPanel } from "./creator-panel";
 
 const MIN_PAYOUT_CENTS = Number(process.env.MARKETPLACE_MIN_PAYOUT_CENTS ?? 50_000);
